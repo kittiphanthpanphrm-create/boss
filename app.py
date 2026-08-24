@@ -40,36 +40,31 @@ def load_database():
 def save_database(df):
     df.to_csv(DB_FILE, index=False)
 
+def format_tag_value(val):
+    s = str(val).strip()
+    if not s or s.lower() in ["nan", "none", "-", ""]:
+        return "{ทั่วไป}"
+    # ถ้ามีวงเล็บอยู่แล้ว
+    if s.startswith("{") and s.endswith("}"):
+        return s
+    # ดึงค่าจากข้างในถ้ามีวงเล็บ
+    m = re.search(r'[\{\[\(](.*?)[\}\]\)]', s)
+    if m:
+        return f"{{{m.group(1).strip()}}}"
+    return f"{{{s}}}"
+
 def parse_tag_and_clean_name(raw_text):
     text = str(raw_text).replace("•", "").strip()
-    
-    # 1. ค้นหาแท็กในวงเล็บปีกกา {Tag}
     m_curly = re.search(r'\{([^}]+)\}', text)
     if m_curly:
         tag_val = m_curly.group(1).strip()
         cleaned_name = re.sub(r'\{[^}]+\}', '', text).strip()
         return f"{{{tag_val}}}", cleaned_name
     
-    # 2. ค้นหาแท็กในวงเล็บก้ามปู [Tag]
     m_square = re.search(r'\[([^\]]+)\]', text)
     if m_square:
         tag_val = m_square.group(1).strip()
         cleaned_name = re.sub(r'\[[^\]]+\]', '', text).strip()
-        return f"{{{tag_val}}}", cleaned_name
-
-    # 3. ค้นหาแท็กในวงเล็บกลม (Tag) เช่น (PV), (yo), (HO)
-    m_paren = re.search(r'\(([^)]+)\)', text)
-    if m_paren:
-        tag_val = m_paren.group(1).strip()
-        if len(tag_val) <= 15:  # เช็คความยาวไม่ให้เป็นข้อความยาว
-            cleaned_name = re.sub(r'\([^)]+\)', '', text).strip()
-            return f"{{{tag_val}}}", cleaned_name
-
-    # 4. ค้นหาแท็กในเครื่องหมายไปป์ |Tag|
-    m_pipe = re.search(r'\|([^\|]+)\|', text)
-    if m_pipe:
-        tag_val = m_pipe.group(1).strip()
-        cleaned_name = re.sub(r'\|[^\|]+\|', '', text).strip()
         return f"{{{tag_val}}}", cleaned_name
         
     return "{ทั่วไป}", text
@@ -134,12 +129,19 @@ def clean_and_prepare_df(raw_df, source_name, target_zone):
     elif len(df.columns) > 1:
         df["คงเหลือ"] = df.iloc[:, 1].astype(str).str.replace(":", "", regex=False).str.strip()
 
-    # 5. ชื่อและแท็ก
+    # 5. แท็ก {Tag} (อ่านจากคอลัมน์ แท็ก {Tag} โดยตรงเป็นหลัก)
+    tag_col = next((c for c in df.columns if "แท็ก" in str(c) or "tag" in str(c).lower()), None)
     name_col = next((c for c in df.columns if any(k in str(c) for k in ["ชื่อ", "รายละ", "ยศ", "รายการ"])), None)
     if name_col is None and len(df.columns) > 4:
         name_col = df.columns[4]
 
-    if name_col:
+    if tag_col:
+        df["แท็ก {Tag}"] = df[tag_col].apply(format_tag_value)
+        if name_col:
+            df["ชื่อรายการสินค้า"] = df[name_col].astype(str).str.replace("•", "").strip()
+        else:
+            df["ชื่อรายการสินค้า"] = "-"
+    elif name_col:
         parsed_results = df[name_col].apply(parse_tag_and_clean_name)
         df["แท็ก {Tag}"] = [res[0] for res in parsed_results]
         df["ชื่อรายการสินค้า"] = [res[1] for res in parsed_results]
@@ -286,7 +288,7 @@ if not df_all.empty and "โซน" in df_all.columns:
 else:
     df_zone = pd.DataFrame()
 
-# ================= 1. มุมมองสินค้าที่มีปัญหา (คงเหลือติดลบ) =================
+# ================= 1. มุมมองสินค้าที่มีปัญหา =================
 if view_mode == "⚠️ สินค้าที่มีปัญหา (คงเหลือติดลบ)":
     st.title(f"⚠️ สินค้าที่มีปัญหา [คงเหลือติดลบ -] : โซน {selected_zone}")
     
