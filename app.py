@@ -143,38 +143,21 @@ with st.sidebar:
 
     st.divider()
     
-    # เมนูลบข้อมูล (เลือกลบทีละไฟล์ หรือทีละรายการสินค้า)
-    with st.expander("🗑️ ลบข้อมูลในระบบ", expanded=False):
-        if not st.session_state.current_df.empty:
-            del_mode = st.radio("เลือกรูปแบบการลบ:", ["ลบตามชื่อไฟล์", "ลบรายสินค้า (ทีละชิ้น)"])
-            
-            if del_mode == "ลบตามชื่อไฟล์" and "ชื่อไฟล์ที่มา" in st.session_state.current_df.columns:
-                available_files = list(st.session_state.current_df["ชื่อไฟล์ที่มา"].dropna().unique())
-                if available_files:
-                    selected_remove_file = st.selectbox("เลือกไฟล์ที่ต้องการลบ:", options=available_files)
-                    if st.button("🗑️ ยืนยันลบไฟล์นี้"):
-                        st.session_state.current_df = st.session_state.current_df[st.session_state.current_df["ชื่อไฟล์ที่มา"] != selected_remove_file]
-                        save_database(st.session_state.current_df)
-                        st.success(f"ลบข้อมูลจากไฟล์ {selected_remove_file} สำเร็จ")
-                        st.rerun()
-                else:
-                    st.caption("ไม่มีชื่อไฟล์ให้เลือก")
-                    
-            elif del_mode == "ลบรายสินค้า (ทีละชิ้น)":
-                df_temp = st.session_state.current_df
-                if "รหัสสินค้า" in df_temp.columns:
-                    items_options = df_temp.apply(lambda r: f"{r.get('รหัสสินค้า', '')} - {r.get('ชื่อรายการสินค้า', '')[:25]}", axis=1).tolist()
-                    selected_item_str = st.selectbox("เลือกรหัสสินค้าที่ต้องการลบ:", options=items_options)
-                    
-                    if selected_item_str:
-                        selected_barcode = selected_item_str.split(" - ")[0].strip()
-                        if st.button("🗑️ ยืนยันลบสินค้านี้"):
-                            st.session_state.current_df = st.session_state.current_df[st.session_state.current_df["รหัสสินค้า"] != selected_barcode]
-                            save_database(st.session_state.current_df)
-                            st.success(f"ลบรหัสสินค้า {selected_barcode} สำเร็จ")
-                            st.rerun()
+    # เมนูการจัดการข้อมูล (ลบเฉพาะไฟล์ที่เลือก)
+    with st.expander("📁 การจัดการข้อมูล", expanded=False):
+        if not st.session_state.current_df.empty and "ชื่อไฟล์ที่มา" in st.session_state.current_df.columns:
+            available_files = list(st.session_state.current_df["ชื่อไฟล์ที่มา"].dropna().unique())
+            if available_files:
+                selected_remove_file = st.selectbox("เลือกไฟล์ที่ต้องการลบ:", options=available_files)
+                if st.button("🗑️ ยืนยันลบไฟล์นี้"):
+                    st.session_state.current_df = st.session_state.current_df[st.session_state.current_df["ชื่อไฟล์ที่มา"] != selected_remove_file]
+                    save_database(st.session_state.current_df)
+                    st.success(f"ลบข้อมูลจากไฟล์ {selected_remove_file} สำเร็จ")
+                    st.rerun()
+            else:
+                st.caption("ไม่มีชื่อไฟล์ให้เลือก")
         else:
-            st.caption("ยังไม่มีข้อมูลในระบบให้ลบ")
+            st.caption("ยังไม่มีข้อมูลในระบบให้จัดการ")
 
 # --- แดชบอร์ดหลัก ---
 st.title("📦 ระบบจัดการและแดชบอร์ดข้อมูลสินค้า")
