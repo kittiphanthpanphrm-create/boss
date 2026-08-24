@@ -59,7 +59,7 @@ def extract_fields_from_text(text, source_name, target_zone):
             "หน่วยนับ": m[5].strip(),
             "จำนวนสั่งล่าสุด": str(int(m[8])) if m[8].isdigit() else "0",
             "โซน": extracted_zone,
-            "คงเหลือ": str(m[6]).strip() if m[6] else "0",
+            "คงเหลือ": str(float(m[6])) if m[6] else "0",
             "สถานะ": m[7] if m[7] else "ปกติ",
             "ชื่อไฟล์ที่มา": source_name
         })
@@ -90,7 +90,7 @@ def clean_and_prepare_df(raw_df, source_name, target_zone):
         if "สั่ง" in str(c):
             df["จำนวนสั่งล่าสุด"] = pd.to_numeric(df[c], errors="coerce").fillna(0).astype(int).astype(str)
         if "คงเหลือ" in str(c):
-            df["คงเหลือ"] = df[c].astype(str).str.strip()
+            df["คงเหลือ"] = pd.to_numeric(df[c], errors="coerce").fillna(0).astype(str)
             
     if "โซน" not in df.columns:
         df["โซน"] = target_zone
@@ -178,13 +178,9 @@ with st.sidebar:
         else:
             st.caption("ยังไม่มีข้อมูลในระบบ")
 
-    st.divider()
-
-    # --- ฟังก์ชันสินค้าที่มีปัญหา (อยู่ใต้การจัดการข้อมูล) ---
-    st.subheader("⚠️ ตรวจสอบรายการ")
-    view_mode = st.radio("เลือกมุมมองที่ต้องการดู:", ["📦 รายการสินค้าปกติ", "⚠️ สินค้าที่มีปัญหา (คงเหลือติดลบ)"])
-
 # --- หน้าแดชบอร์ดหลัก ---
+st.title(f"📦 จำนวนสินค้าประจำโซน : {selected_zone}")
+
 df_all = st.session_state.current_df
 
 if not df_all.empty and "โซน" in df_all.columns:
@@ -192,18 +188,20 @@ if not df_all.empty and "โซน" in df_all.columns:
 else:
     df_zone = pd.DataFrame()
 
-if view_mode == "⚠️ สินค้าที่มีปัญหา (คงเหลือติดลบ)":
-    st.title(f"⚠️ สินค้าที่มีปัญหา [คงเหลือติดลบ -] : โซน {selected_zone}")
+if not df_zone.empty:
+    st.subheader("🏷️ สินค้าจัดกลุ่มตามแท็ก {Tag}")
     
-    if not df_zone.empty and "คงเหลือ" in df_zone.columns:
-        # กรองเฉพาะรายการที่คงเหลือมีเครื่องหมายลบ '-'
-        problem_df = df_zone[df_zone["คงเหลือ"].astype(str).str.startswith("-")].reset_index(drop=True)
+    unique_tags = sorted(list(df_zone["แท็ก {Tag}"].dropna().unique()))
+    selected_tag = st.selectbox("🔍 เลือกกลุ่มแท็กเพื่อแสดง:", options=["แสดงทุกกลุ่มแท็ก"] + unique_tags)
+    
+    display_tags = unique_tags if selected_tag == "แสดงทุกกลุ่มแท็ก" else [selected_tag]
+    
+    for tag in display_tags:
+        group_df = df_zone[df_zone["แท็ก {Tag}"] == tag].reset_index(drop=True)
         
-        if not problem_df.empty:
-            st.error(f"🚨 พบสินค้าที่มีปัญหาคงเหลือติดลบทั้งหมด **{len(problem_df)} รายการ** ในโซน {selected_zone}")
-            
+        with st.expander(f"📌 แท็ก: **{tag}** (รวม {len(group_df)} รายการ)", expanded=True):
             cols = st.columns(3)
-            for idx, row in problem_df.iterrows():
+            for idx, row in group_df.iterrows():
                 barcode = str(row.get("รหัสสินค้า", "")).strip()
                 sub_code = str(row.get("รหัสรอง", "")).strip()
                 name = str(row.get("ชื่อรายการสินค้า", "")).strip()
@@ -224,85 +222,24 @@ if view_mode == "⚠️ สินค้าที่มีปัญหา (คง
                         st.caption(f"รหัสสินค้า: `{barcode}` | โซน: `{selected_zone}`")
                         st.markdown(f"📋 **รหัสรอง (คลิกเพื่อ Copy):**")
                         st.code(sub_code, language="text")
-                        st.markdown(f"🚨 **คงเหลือ:** :red[{stock}] | 🛒 **สั่งล่าสุด:** {qty}")
+                        st.markdown(f"📦 **คงเหลือ:** {stock} | 🛒 **สั่งล่าสุด:** {qty}")
                         st.link_button("🌐 เปิดดูบนเว็บ TKK Online", web_link, use_container_width=True)
 
-            st.divider()
-            st.subheader("📋 ตารางรายการสินค้าที่มีปัญหา")
-            display_prob_df = problem_df.drop(columns=["ชื่อไฟล์ที่มา"], errors="ignore")
-            st.dataframe(display_prob_df, use_container_width=True)
-            
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine="openpyxl") as writer:
-                display_prob_df.to_excel(writer, sheet_name=f"ปัญหา_โซน_{selected_zone}", index=False)
-            
-            st.download_button(
-                label=f"📥 ดาวน์โหลดรายการสินค้าที่มีปัญหา โซน {selected_zone} (.xlsx)",
-                data=output.getvalue(),
-                file_name=f"สินค้ามีปัญหา_โซน_{selected_zone}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-        else:
-            st.success(f"🎉 ไม่พบสินค้าคงเหลือติดลบในโซน {selected_zone}")
-    else:
-        st.info(f"👈 โซน {selected_zone} ยังไม่มีข้อมูลสินค้า")
+    st.divider()
 
+    st.subheader(f"📋 ตารางข้อมูลสินค้าทั้งหมด [โซน {selected_zone}]")
+    display_df = df_zone.drop(columns=["ชื่อไฟล์ที่มา"], errors="ignore")
+    st.dataframe(display_df, use_container_width=True)
+
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        display_df.to_excel(writer, sheet_name=f"โซน_{selected_zone}", index=False)
+    
+    st.download_button(
+        label=f"📥 ดาวน์โหลดไฟล์ Excel โซน {selected_zone} (.xlsx)",
+        data=output.getvalue(),
+        file_name=f"ข้อมูลสินค้า_โซน_{selected_zone}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
 else:
-    # มุมมองปกติ
-    st.title(f"📦 จำนวนสินค้าประจำโซน : {selected_zone}")
-
-    if not df_zone.empty:
-        st.subheader("🏷️ สินค้าจัดกลุ่มตามแท็ก {Tag}")
-        
-        unique_tags = sorted(list(df_zone["แท็ก {Tag}"].dropna().unique()))
-        selected_tag = st.selectbox("🔍 เลือกกลุ่มแท็กเพื่อแสดง:", options=["แสดงทุกกลุ่มแท็ก"] + unique_tags)
-        
-        display_tags = unique_tags if selected_tag == "แสดงทุกกลุ่มแท็ก" else [selected_tag]
-        
-        for tag in display_tags:
-            group_df = df_zone[df_zone["แท็ก {Tag}"] == tag].reset_index(drop=True)
-            
-            with st.expander(f"📌 แท็ก: **{tag}** (รวม {len(group_df)} รายการ)", expanded=True):
-                cols = st.columns(3)
-                for idx, row in group_df.iterrows():
-                    barcode = str(row.get("รหัสสินค้า", "")).strip()
-                    sub_code = str(row.get("รหัสรอง", "")).strip()
-                    name = str(row.get("ชื่อรายการสินค้า", "")).strip()
-                    qty = row.get("จำนวนสั่งล่าสุด", 0)
-                    stock = row.get("คงเหลือ", 0)
-                    
-                    img_url = f"https://tkkonlineshop.com/images/products/{barcode}.jpg"
-                    web_link = f"https://tkkonlineshop.com/products/{barcode}"
-                    
-                    with cols[idx % 3]:
-                        with st.container(border=True):
-                            st.image(
-                                img_url, 
-                                caption=f"รหัส: {barcode}", 
-                                use_container_width=True
-                            )
-                            st.markdown(f"**{name}**")
-                            st.caption(f"รหัสสินค้า: `{barcode}` | โซน: `{selected_zone}`")
-                            st.markdown(f"📋 **รหัสรอง (คลิกเพื่อ Copy):**")
-                            st.code(sub_code, language="text")
-                            st.markdown(f"📦 **คงเหลือ:** {stock} | 🛒 **สั่งล่าสุด:** {qty}")
-                            st.link_button("🌐 เปิดดูบนเว็บ TKK Online", web_link, use_container_width=True)
-
-        st.divider()
-
-        st.subheader(f"📋 ตารางข้อมูลสินค้าทั้งหมด [โซน {selected_zone}]")
-        display_df = df_zone.drop(columns=["ชื่อไฟล์ที่มา"], errors="ignore")
-        st.dataframe(display_df, use_container_width=True)
-
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine="openpyxl") as writer:
-            display_df.to_excel(writer, sheet_name=f"โซน_{selected_zone}", index=False)
-        
-        st.download_button(
-            label=f"📥 ดาวน์โหลดไฟล์ Excel โซน {selected_zone} (.xlsx)",
-            data=output.getvalue(),
-            file_name=f"ข้อมูลสินค้า_โซน_{selected_zone}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-    else:
-        st.info(f"👈 โซน **{selected_zone}** ยังไม่มีข้อมูล คลิกที่เมนูด้านซ้าย **'📥 เพิ่มไฟล์ข้อมูลเข้าโซน {selected_zone}'** เพื่ออัปโหลดและกดบันทึก")
+    st.info(f"👈 โซน **{selected_zone}** ยังไม่มีข้อมูล คลิกที่เมนูด้านซ้าย **'📥 เพิ่มไฟล์ข้อมูลเข้าโซน {selected_zone}'** เพื่ออัปโหลดและกดบันทึก")
