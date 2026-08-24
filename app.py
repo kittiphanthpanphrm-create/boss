@@ -9,10 +9,20 @@ from pypdf import PdfReader
 
 st.set_page_config(page_title="ระบบแยกคอลัมน์ & แดชบอร์ดสินค้า", layout="wide")
 
-# กำหนดชื่อไฟล์สำหรับจัดเก็บข้อมูลถาวร
+# ซ่อนปุ่มกากบาทของตัวอัปโหลดไฟล์ด้วย CSS
+st.markdown("""
+<style>
+button[aria-label="Delete"] {
+    display: none !important;
+}
+div[data-testid="stFileUploaderDeleteBtn"] {
+    display: none !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
 DB_FILE = "database_inventory.csv"
 
-# โหลดข้อมูลเดิมจากพื้นที่จัดเก็บ
 def load_database():
     if os.path.exists(DB_FILE):
         try:
@@ -21,12 +31,10 @@ def load_database():
             return pd.DataFrame()
     return pd.DataFrame()
 
-# บันทึกข้อมูลลงพื้นที่จัดเก็บถาวร
 def save_database(df):
     df.to_csv(DB_FILE, index=False)
 
-# ฟังก์ชันแยกข้อมูลจากข้อความ PDF
-def extract_fields_from_text(text):
+def extract_fields_from_text(text, source_name):
     pattern = re.compile(
         r'(\d{4,5})\s+รหัส\s*:\s*(\d+)\s*รหัสรอง\s*:\s*(\d+)[•\s\-]*(.*?)(?:\{([^}]+)\})?\s*หน่วยนับ\s*:\s*([^คง]+)คงเหลือ\s*:\s*([\-\d\.]+)\s*(เลิกขาย|ขาย)?\s*(\d+)\s*โซน\s*:\s*([A-Za-z0-9]+)',
         re.DOTALL
@@ -45,12 +53,12 @@ def extract_fields_from_text(text):
             "จำนวนสั่งล่าสุด": str(int(m[8])) if m[8].isdigit() else "0",
             "โซน": m[9].strip(),
             "คงเหลือ": str(float(m[6])) if m[6] else "0",
-            "สถานะ": m[7] if m[7] else "ปกติ"
+            "สถานะ": m[7] if m[7] else "ปกติ",
+            "ชื่อไฟล์ที่มา": source_name
         })
     return pd.DataFrame(data)
 
-# ฟังก์ชันจัดระเบียบข้อมูลจาก Excel / CSV
-def clean_and_prepare_df(raw_df):
+def clean_and_prepare_df(raw_df, source_name):
     df = raw_df.copy()
     for col in df.columns:
         if "รหัสสินค้า" in str(col) or str(col) == "รหัส":
@@ -75,21 +83,23 @@ def clean_and_prepare_df(raw_df):
         if "คงเหลือ" in str(c):
             df["คงเหลือ"] = pd.to_numeric(df[c], errors="coerce").fillna(0).astype(str)
             
-    standard_cols = ["รหัสสินค้า", "รหัสรอง", "ชื่อรายการสินค้า", "แท็ก {Tag}", "หน่วยนับ", "จำนวนสั่งล่าสุด", "โซน", "คงเหลือ", "สถานะ"]
+    df["ชื่อไฟล์ที่มา"] = source_name
+    standard_cols = ["รหัสสินค้า", "รหัสรอง", "ชื่อรายการสินค้า", "แท็ก {Tag}", "หน่วยนับ", "จำนวนสั่งล่าสุด", "โซน", "คงเหลือ", "สถานะ", "ชื่อไฟล์ที่มา"]
     existing_cols = [c for c in standard_cols if c in df.columns]
     return df[existing_cols]
 
-# ตัวแปรจำในหน่วยความจำ
 if "current_df" not in st.session_state:
     st.session_state.current_df = load_database()
 if "processed_files" not in st.session_state:
-    st.session_state.processed_files = set()
+    if "ชื่อไฟล์ที่มา" in st.session_state.current_df.columns:
+        st.session_state.processed_files = set(st.session_state.current_df["ชื่อไฟล์ที่มา"].dropna().unique())
+    else:
+        st.session_state.processed_files = set()
 
-# --- แถบเมนูด้านซ้าย (Sidebar) สำหรับจัดการอัปโหลด ---
+# --- แถบเมนูซ้าย ---
 with st.sidebar:
     st.header("⚙️ จัดการระบบ")
     
-    # ซ่อน/แสดงกล่องอัปโหลดด้วย Popover/Expander เพื่อป้องกันการกดโดน
     with st.expander("📥 คลิกเพื่อเพิ่มไฟล์ข้อมูลใหม่", expanded=False):
         uploaded_files = st.file_uploader(
             "เลือกไฟล์ (PDF, CSV, XLSX)", 
@@ -106,11 +116,11 @@ with st.sidebar:
                         if uploaded_file.name.endswith(".pdf"):
                             reader = PdfReader(uploaded_file)
                             full_text = "".join([page.extract_text() + "\n" for page in reader.pages])
-                            new_df = extract_fields_from_text(full_text)
+                            new_df = extract_fields_from_text(full_text, uploaded_file.name)
                         elif uploaded_file.name.endswith(".csv"):
-                            new_df = clean_and_prepare_df(pd.read_csv(uploaded_file))
+                            new_df = clean_and_prepare_df(pd.read_csv(uploaded_file), uploaded_file.name)
                         elif uploaded_file.name.endswith(".xlsx"):
-                            new_df = clean_and_prepare_df(pd.read_excel(uploaded_file))
+                            new_df = clean_and_prepare_df(pd.read_excel(uploaded_file), uploaded_file.name)
                         
                         if not new_df.empty:
                             if st.session_state.current_df.empty:
@@ -131,23 +141,34 @@ with st.sidebar:
 
     st.divider()
     
-    # เพิ่มกล่องยืนยันก่อนล้างข้อมูล
-    with st.expander("🗑️ ล้างฐานข้อมูล", expanded=False):
-        st.caption("การล้างข้อมูลจะไม่สามารถย้อนกลับได้")
-        if st.button("ยืนยันการล้างข้อมูลทั้งหมด", type="primary"):
+    # เมนูลบข้อมูลเฉพาะไฟล์ หรือล้างทั้งหมด
+    with st.expander("🗑️ ลบข้อมูลในระบบ", expanded=False):
+        if not st.session_state.current_df.empty and "ชื่อไฟล์ที่มา" in st.session_state.current_df.columns:
+            available_files = list(st.session_state.current_df["ชื่อไฟล์ที่มา"].dropna().unique())
+            if available_files:
+                selected_remove_file = st.selectbox("เลือกไฟล์ที่ต้องการลบข้อมูลออก:", options=available_files)
+                if st.button("🗑️ ยืนยันลบข้อมูลของไฟล์นี้"):
+                    st.session_state.current_df = st.session_state.current_df[st.session_state.current_df["ชื่อไฟล์ที่มา"] != selected_remove_file]
+                    if selected_remove_file in st.session_state.processed_files:
+                        st.session_state.processed_files.remove(selected_remove_file)
+                    save_database(st.session_state.current_df)
+                    st.rerun()
+            st.divider()
+            
+        st.caption("หรือล้างข้อมูลทั้งหมด:")
+        if st.button("ล้างฐานข้อมูลทั้งหมด", type="primary"):
             if os.path.exists(DB_FILE):
                 os.remove(DB_FILE)
             st.session_state.current_df = pd.DataFrame()
             st.session_state.processed_files = set()
             st.rerun()
 
-# --- หน้าแดชบอร์ดหลัก ---
+# --- แดชบอร์ดหลัก ---
 st.title("📦 ระบบจัดการและแดชบอร์ดข้อมูลสินค้า")
 
 df = st.session_state.current_df
 
 if not df.empty:
-    # แปลงชนิดข้อมูลสำหรับแสดงผลและคำนวณสถิติ
     qty_sum = pd.to_numeric(df.get("จำนวนสั่งล่าสุด", 0), errors="coerce").fillna(0).sum()
     stock_sum = pd.to_numeric(df.get("คงเหลือ", 0), errors="coerce").fillna(0).sum()
     
@@ -161,7 +182,6 @@ if not df.empty:
 
     st.divider()
 
-    # แสดงการ์ดรูปภาพตามแท็ก
     st.subheader("🖼️ แสดงสินค้าและรูปภาพตามกลุ่มแท็ก")
     if "แท็ก {Tag}" in df.columns:
         tag_list = sorted(list(df["แท็ก {Tag}"].dropna().unique()))
@@ -196,13 +216,13 @@ if not df.empty:
 
     st.divider()
 
-    # ตารางรวมและปุ่มดาวน์โหลด
     st.subheader("📋 ตารางรายการข้อมูลสะสมทั้งหมด")
-    st.dataframe(df, use_container_width=True)
+    display_df = df.drop(columns=["ชื่อไฟล์ที่มา"], errors="ignore")
+    st.dataframe(display_df, use_container_width=True)
 
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df.to_excel(writer, sheet_name="ข้อมูลสินค้าแยกแท็ก", index=False)
+        display_df.to_excel(writer, sheet_name="ข้อมูลสินค้าแยกแท็ก", index=False)
     
     st.download_button(
         label="📥 ดาวน์โหลดไฟล์ข้อมูลรวมทั้งหมดเป็น Excel (.xlsx)",
