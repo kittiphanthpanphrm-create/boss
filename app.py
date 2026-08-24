@@ -5,7 +5,7 @@ import io
 import os
 from pypdf import PdfReader
 
-st.set_page_config(page_title="ระบบจัดการข้อมูลสินค้าตามโซน", layout="wide")
+st.set_page_config(page_title="ระบบจัดการจำนวนสินค้าตามโซน", layout="wide")
 
 # ซ่อนปุ่มกากบาทของตัวอัปโหลดไฟล์ด้วย CSS
 st.markdown("""
@@ -21,7 +21,6 @@ div[data-testid="stFileUploaderDeleteBtn"] {
 
 DB_FILE = "database_inventory.csv"
 
-# รายการโซนทั้งหมด 27 โซน
 ALL_ZONES = [
     "AA", "AB", "BB", "CC", "DD", "EE", "FF", "GG", 
     "IA", "IB", "IC", "JJ", "KK", "LL", "MA", "MB", 
@@ -88,35 +87,35 @@ def extract_fields_from_text(text, source_name, target_zone):
 def clean_and_prepare_df(raw_df, source_name, target_zone):
     df = raw_df.copy()
     
-    # 1. โซน
+    # โซน
     zone_col = next((c for c in df.columns if "โซน" in str(c)), None)
     if zone_col:
         df["โซน"] = df[zone_col].astype(str).str.replace("โซน", "", regex=False).str.replace(":", "", regex=False).str.strip().str.upper()
     else:
         df["โซน"] = target_zone.upper()
         
-    # 2. รหัสสินค้า
+    # รหัสสินค้า
     barcode_col = next((c for c in df.columns if "รหัสสินค้า" in str(c) or str(c).strip() == "รหัส" or "บาร์โค้ด" in str(c)), None)
     if barcode_col:
         df["รหัสสินค้า"] = df[barcode_col].astype(str).str.replace(":", "", regex=False).str.replace(r'\.0$', '', regex=True).str.strip()
     elif len(df.columns) > 2:
         df["รหัสสินค้า"] = df.iloc[:, 2].astype(str).str.replace(":", "", regex=False).str.replace(r'\.0$', '', regex=True).str.strip()
 
-    # 3. รหัสรอง
+    # รหัสรอง
     sub_col = next((c for c in df.columns if "รหัสรอง" in str(c)), None)
     if sub_col:
         df["รหัสรอง"] = df[sub_col].astype(str).str.replace(":", "", regex=False).str.replace(r'\.0$', '', regex=True).str.strip()
     elif len(df.columns) > 3:
         df["รหัสรอง"] = df.iloc[:, 3].astype(str).str.replace(":", "", regex=False).str.replace(r'\.0$', '', regex=True).str.strip()
 
-    # 4. ยอดคงเหลือ
+    # คงเหลือ
     stock_col = next((c for c in df.columns if "คงเหลือ" in str(c)), None)
     if stock_col:
         df["คงเหลือ"] = df[stock_col].astype(str).str.replace(":", "", regex=False).str.strip()
     elif len(df.columns) > 1:
         df["คงเหลือ"] = df.iloc[:, 1].astype(str).str.replace(":", "", regex=False).str.strip()
 
-    # 5. ชื่อและแท็ก
+    # ชื่อและแท็ก
     name_col = next((c for c in df.columns if any(k in str(c) for k in ["ชื่อ", "รายละ", "ยศ", "รายการ"])), None)
     if name_col is None and len(df.columns) > 4:
         name_col = df.columns[4]
@@ -151,6 +150,7 @@ def is_negative_stock(val):
     except ValueError:
         return False
 
+# ฟังก์ชันแสดงการ์ดสินค้าแบบ 3 คอลัมน์
 def render_product_cards(items_df, current_zone, is_problem=False):
     cols = st.columns(3)
     for idx, row in items_df.iterrows():
@@ -187,13 +187,12 @@ if "uploader_key" not in st.session_state:
 
 # --- แถบเมนูด้านซ้าย (Sidebar) ---
 with st.sidebar:
-    st.header("📍 โซนสินค้า")
+    st.header("📊 จำนวนสินค้า")
     selected_zone = st.selectbox("เลือกโซนที่ต้องการเข้าดู:", options=ALL_ZONES)
     
     st.divider()
     st.subheader(f"⚙️ การจัดการข้อมูล [โซน {selected_zone}]")
     
-    # เพิ่มไฟล์ข้อมูลเข้าโซน
     with st.expander(f"📥 เพิ่มไฟล์ข้อมูลเข้าโซน {selected_zone}", expanded=False):
         uploaded_files = st.file_uploader(
             f"เลือกไฟล์สำหรับโซน {selected_zone} (PDF, CSV, XLSX)", 
@@ -225,7 +224,7 @@ with st.sidebar:
                 combined_new_df = pd.concat(preview_dfs, ignore_index=True)
                 st.info(f"เตรียมพร้อมบันทึก: {len(combined_new_df)} รายการ")
                 
-                if st.button(f"💾 ยืนยันบันทึกเข้าโซน {selected_zone}", type="primary"):
+                if st.button(f"💾 ยืนยันบันทึกข้อมูล", type="primary"):
                     if st.session_state.current_df.empty:
                         st.session_state.current_df = combined_new_df
                     else:
@@ -235,10 +234,9 @@ with st.sidebar:
                     
                     save_database(st.session_state.current_df)
                     st.session_state.uploader_key += 1
-                    st.success(f"✅ บันทึกข้อมูลเข้าโซน {selected_zone} เรียบร้อย!")
+                    st.success(f"✅ บันทึกข้อมูลเรียบร้อย!")
                     st.rerun()
 
-    # ลบไฟล์ออกจากโซน
     with st.expander(f"📁 ลบข้อมูลไฟล์ในโซน {selected_zone}", expanded=False):
         df_all = st.session_state.current_df
         if not df_all.empty and "โซน" in df_all.columns and "ชื่อไฟล์ที่มา" in df_all.columns:
@@ -260,7 +258,7 @@ with st.sidebar:
     st.subheader("⚠️ ตรวจสอบรายการ")
     view_mode = st.radio("เลือกมุมมองที่ต้องการดู:", ["📦 รายการสินค้าปกติ", "⚠️ สินค้าที่มีปัญหา (คงเหลือติดลบ)"])
 
-# --- หน้าแดชบอร์ดหลัก ---
+# --- แดชบอร์ดหลัก ---
 df_all = st.session_state.current_df
 
 if not df_all.empty and "โซน" in df_all.columns:
@@ -268,7 +266,7 @@ if not df_all.empty and "โซน" in df_all.columns:
 else:
     df_zone = pd.DataFrame()
 
-# ================= 1. มุมมองสินค้าที่มีปัญหา =================
+# ================= 1. มุมมองสินค้าที่มีปัญหา (คงเหลือติดลบ) =================
 if view_mode == "⚠️ สินค้าที่มีปัญหา (คงเหลือติดลบ)":
     st.title(f"⚠️ สินค้าที่มีปัญหา [คงเหลือติดลบ -] : โซน {selected_zone}")
     
@@ -283,6 +281,7 @@ if view_mode == "⚠️ สินค้าที่มีปัญหา (คง
             tag_options = ["📌 รวมทุกแท็ก (จัดกลุ่มตามแท็กอัตโนมัติ)"] + prob_tags
             selected_prob_tag = st.selectbox("🏷️ เลือกกลุ่มแท็กสินค้าที่มีปัญหา:", options=tag_options)
             
+            # ถ้าเลือกรวมทุกแท็ก ให้วนลูปจัดกลุ่มแท็กที่เหมือนกัน
             if selected_prob_tag == "📌 รวมทุกแท็ก (จัดกลุ่มตามแท็กอัตโนมัติ)":
                 for tag in prob_tags:
                     group_prob_df = problem_df[problem_df["แท็ก {Tag}"] == tag].reset_index(drop=True)
@@ -300,10 +299,10 @@ if view_mode == "⚠️ สินค้าที่มีปัญหา (คง
             
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine="openpyxl") as writer:
-                display_prob_df.to_excel(writer, sheet_name=f"ปัญหา_{selected_zone}", index=False)
+                display_prob_df.to_excel(writer, sheet_name=f"ปัญหา_โซน_{selected_zone}", index=False)
             
             st.download_button(
-                label=f"📥 ดาวน์โหลดรายการสินค้ามีปัญหา โซน {selected_zone} (.xlsx)",
+                label=f"📥 ดาวน์โหลดรายการสินค้าที่มีปัญหา โซน {selected_zone} (.xlsx)",
                 data=output.getvalue(),
                 file_name=f"สินค้ามีปัญหา_โซน_{selected_zone}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -315,7 +314,7 @@ if view_mode == "⚠️ สินค้าที่มีปัญหา (คง
 
 # ================= 2. มุมมองสินค้าปกติ =================
 else:
-    st.title(f"📦 สินค้าประจำโซน : {selected_zone}")
+    st.title(f"📦 จำนวนสินค้าประจำโซน : {selected_zone}")
 
     if not df_zone.empty:
         st.subheader("🖼️ แสดงสินค้าและรูปภาพตามกลุ่มแท็ก")
@@ -325,6 +324,7 @@ else:
             tag_options = ["📌 รวมทุกแท็ก (จัดกลุ่มตามแท็กอัตโนมัติ)"] + tag_list
             selected_tag = st.selectbox("🏷️ เลือกกลุ่มแท็กสินค้าที่ต้องการดู:", options=tag_options)
             
+            # ถ้าเลือกรวมทุกแท็ก ให้วนลูปจัดกลุ่มแท็กที่เหมือนกัน
             if selected_tag == "📌 รวมทุกแท็ก (จัดกลุ่มตามแท็กอัตโนมัติ)":
                 for tag in tag_list:
                     group_df = df_zone[df_zone["แท็ก {Tag}"] == tag].reset_index(drop=True)
@@ -337,7 +337,7 @@ else:
 
         st.divider()
 
-        st.subheader(f"📋 ตารางรายการข้อมูล [โซน {selected_zone}]")
+        st.subheader(f"📋 ตารางข้อมูลสินค้าทั้งหมด [โซน {selected_zone}]")
         display_df = df_zone.drop(columns=["ชื่อไฟล์ที่มา"], errors="ignore")
         st.dataframe(display_df, use_container_width=True)
 
