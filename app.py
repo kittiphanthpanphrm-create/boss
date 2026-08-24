@@ -7,6 +7,7 @@ from pypdf import PdfReader
 
 st.set_page_config(page_title="ระบบจัดการจำนวนสินค้าตามโซน", layout="wide")
 
+# ซ่อนปุ่มกากบาทของตัวอัปโหลดไฟล์ด้วย CSS
 st.markdown("""
 <style>
 button[aria-label="Delete"] {
@@ -57,7 +58,7 @@ def extract_fields_from_text(text, source_name, target_zone):
             "แท็ก {Tag}": f"{{{raw_tag}}}" if raw_tag else "{ทั่วไป}",
             "หน่วยนับ": m[5].strip(),
             "จำนวนสั่งล่าสุด": str(int(m[8])) if m[8].isdigit() else "0",
-            "โซน": extracted_zone.upper(),
+            "โซน": extracted_zone,
             "คงเหลือ": str(m[6]).strip() if m[6] else "0",
             "สถานะ": m[7] if m[7] else "ปกติ",
             "ชื่อไฟล์ที่มา": source_name
@@ -66,67 +67,44 @@ def extract_fields_from_text(text, source_name, target_zone):
 
 def clean_and_prepare_df(raw_df, source_name, target_zone):
     df = raw_df.copy()
-    
-    # ดึงและทำความสะอาดโซน
-    zone_col = next((c for c in df.columns if "โซน" in str(c)), None)
-    if zone_col:
-        df["โซน"] = df[zone_col].astype(str).str.replace("โซน", "", regex=False).str.replace(":", "", regex=False).str.strip().str.upper()
-    else:
-        df["โซน"] = target_zone.upper()
-        
-    # ดึงและทำความสะอาดรหัสสินค้า
-    barcode_col = next((c for c in df.columns if "รหัสสินค้า" in str(c) or str(c).strip() == "รหัส" or "บาร์โค้ด" in str(c)), None)
-    if barcode_col:
-        df["รหัสสินค้า"] = df[barcode_col].astype(str).str.replace(":", "", regex=False).str.replace(r'\.0$', '', regex=True).str.strip()
-    elif len(df.columns) > 2:
-        df["รหัสสินค้า"] = df.iloc[:, 2].astype(str).str.replace(":", "", regex=False).str.replace(r'\.0$', '', regex=True).str.strip()
-
-    # ดึงและทำความสะอาดรหัสรอง
-    sub_col = next((c for c in df.columns if "รหัสรอง" in str(c)), None)
-    if sub_col:
-        df["รหัสรอง"] = df[sub_col].astype(str).str.replace(":", "", regex=False).str.replace(r'\.0$', '', regex=True).str.strip()
-    elif len(df.columns) > 3:
-        df["รหัสรอง"] = df.iloc[:, 3].astype(str).str.replace(":", "", regex=False).str.replace(r'\.0$', '', regex=True).str.strip()
-
-    # ดึงยอดคงเหลือ (ครอบคลุมทั้ง คงเหลือ และ จำนวนคงเหลือ)
-    stock_col = next((c for c in df.columns if "คงเหลือ" in str(c)), None)
-    if stock_col:
-        df["คงเหลือ"] = df[stock_col].astype(str).str.replace(":", "", regex=False).str.strip()
-    elif len(df.columns) > 1:
-        df["คงเหลือ"] = df.iloc[:, 1].astype(str).str.replace(":", "", regex=False).str.strip()
-
-    # ดึงชื่อและแท็ก
-    name_col = next((c for c in df.columns if any(k in str(c) for k in ["ชื่อ", "รายละ", "ยศ", "รายการ"])), None)
-    if name_col is None and len(df.columns) > 4:
-        name_col = df.columns[4]
-
-    if name_col:
+    for col in df.columns:
+        if "รหัสสินค้า" in str(col) or str(col) == "รหัส":
+            df["รหัสสินค้า"] = df[col].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+        if "รหัสรอง" in str(col):
+            df["รหัสรอง"] = df[col].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+            
+    if "แท็ก {Tag}" not in df.columns:
+        name_col = next((c for c in df.columns if "ชื่อ" in str(c) or "รายละ" in str(c)), df.columns[3] if len(df.columns) > 3 else df.columns[0])
         def get_tag(x):
             m = re.search(r'\{([^}]+)\}', str(x))
             return f"{{{m.group(1).strip()}}}" if m else "{ทั่วไป}"
         def get_name(x):
-            return re.sub(r'\{[^}]+\}', '', str(x)).replace("•", "").strip()
+            return re.sub(r'\{[^}]+\}', '', str(x)).strip()
             
         df["แท็ก {Tag}"] = df[name_col].apply(get_tag)
         df["ชื่อรายการสินค้า"] = df[name_col].apply(get_name)
     else:
-        df["แท็ก {Tag}"] = "{ทั่วไป}"
-        df["ชื่อรายการสินค้า"] = "-"
-
-    if "จำนวนสั่งล่าสุด" not in df.columns:
-        df["จำนวนสั่งล่าสุด"] = "0"
-    if "สถานะ" not in df.columns:
-        df["สถานะ"] = "ปกติ"
-    if "หน่วยนับ" not in df.columns:
-        df["หน่วยนับ"] = "-"
+        df["แท็ก {Tag}"] = df["แท็ก {Tag}"].fillna("{ทั่วไป}").astype(str).str.strip()
+    
+    for c in df.columns:
+        if "สั่ง" in str(c):
+            df["จำนวนสั่งล่าสุด"] = pd.to_numeric(df[c], errors="coerce").fillna(0).astype(int).astype(str)
+        if "คงเหลือ" in str(c):
+            df["คงเหลือ"] = df[c].astype(str).str.strip()
+            
+    if "โซน" not in df.columns:
+        df["โซน"] = target_zone
+    else:
+        df["โซน"] = df["โซน"].fillna(target_zone).astype(str).str.strip()
         
     df["ชื่อไฟล์ที่มา"] = source_name
     standard_cols = ["รหัสสินค้า", "รหัสรอง", "ชื่อรายการสินค้า", "แท็ก {Tag}", "หน่วยนับ", "จำนวนสั่งล่าสุด", "โซน", "คงเหลือ", "สถานะ", "ชื่อไฟล์ที่มา"]
     existing_cols = [c for c in standard_cols if c in df.columns]
     return df[existing_cols]
 
+# ฟังก์ชันตรวจสอบว่าค่าคงเหลือติดลบหรือไม่
 def is_negative_stock(val):
-    s = str(val).strip().replace(":", "")
+    s = str(val).strip()
     if s.startswith("-"):
         return True
     try:
@@ -140,7 +118,7 @@ if "current_df" not in st.session_state:
 if "uploader_key" not in st.session_state:
     st.session_state.uploader_key = 0
 
-# --- แถบเมนูด้านซ้าย ---
+# --- แถบเมนูด้านซ้าย (Sidebar) ---
 with st.sidebar:
     st.header("📊 จำนวนสินค้า")
     selected_zone = st.selectbox("เลือกโซนที่ต้องการเข้าดู:", options=ALL_ZONES)
@@ -148,6 +126,7 @@ with st.sidebar:
     st.divider()
     st.subheader(f"⚙️ การจัดการข้อมูล [โซน {selected_zone}]")
     
+    # เพิ่มไฟล์ข้อมูลเข้าโซน
     with st.expander(f"📥 เพิ่มไฟล์ข้อมูลเข้าโซน {selected_zone}", expanded=False):
         uploaded_files = st.file_uploader(
             f"เลือกไฟล์สำหรับโซน {selected_zone} (PDF, CSV, XLSX)", 
@@ -170,8 +149,7 @@ with st.sidebar:
                         t_df = clean_and_prepare_df(pd.read_excel(u_file), u_file.name, selected_zone)
                     
                     if not t_df.empty:
-                        # ถ้าไฟล์ไม่ได้ระบุโซน ให้ใช้โซนปัจจุบัน
-                        t_df["โซน"] = t_df["โซน"].replace({"": selected_zone, "-": selected_zone, "NAN": selected_zone}).fillna(selected_zone)
+                        t_df["โซน"] = t_df["โซน"].replace({"": selected_zone, "-": selected_zone}).fillna(selected_zone)
                         preview_dfs.append(t_df)
                 except Exception as e:
                     st.error(f"ไฟล์ {u_file.name} ผิดพลาด: {e}")
@@ -180,7 +158,7 @@ with st.sidebar:
                 combined_new_df = pd.concat(preview_dfs, ignore_index=True)
                 st.info(f"เตรียมพร้อมบันทึก: {len(combined_new_df)} รายการ")
                 
-                if st.button(f"💾 ยืนยันบันทึกข้อมูล", type="primary"):
+                if st.button(f"💾 ยืนยันบันทึกเข้าโซน {selected_zone}", type="primary"):
                     if st.session_state.current_df.empty:
                         st.session_state.current_df = combined_new_df
                     else:
@@ -190,9 +168,10 @@ with st.sidebar:
                     
                     save_database(st.session_state.current_df)
                     st.session_state.uploader_key += 1
-                    st.success(f"✅ บันทึกข้อมูลเรียบร้อย!")
+                    st.success(f"✅ บันทึกข้อมูลเข้าโซน {selected_zone} เรียบร้อย!")
                     st.rerun()
 
+    # ลบไฟล์ออกจากโซน
     with st.expander(f"📁 ลบข้อมูลไฟล์ในโซน {selected_zone}", expanded=False):
         df_all = st.session_state.current_df
         if not df_all.empty and "โซน" in df_all.columns and "ชื่อไฟล์ที่มา" in df_all.columns:
@@ -211,10 +190,12 @@ with st.sidebar:
             st.caption("ยังไม่มีข้อมูลในระบบ")
 
     st.divider()
+
+    # --- ฟังก์ชันสินค้าที่มีปัญหา (อยู่ใต้การจัดการข้อมูล) ---
     st.subheader("⚠️ ตรวจสอบรายการ")
     view_mode = st.radio("เลือกมุมมองที่ต้องการดู:", ["📦 รายการสินค้าปกติ", "⚠️ สินค้าที่มีปัญหา (คงเหลือติดลบ)"])
 
-# --- หน้าแดชบอร์ดหลัก ---
+# --- การประมวลผลข้อมูลหน้าแดชบอร์ด ---
 df_all = st.session_state.current_df
 
 if not df_all.empty and "โซน" in df_all.columns:
@@ -222,17 +203,19 @@ if not df_all.empty and "โซน" in df_all.columns:
 else:
     df_zone = pd.DataFrame()
 
-# ================= 1. มุมมองสินค้าที่มีปัญหา =================
+# ================= 1. มุมมองสินค้าที่มีปัญหา (คงเหลือติดลบ) =================
 if view_mode == "⚠️ สินค้าที่มีปัญหา (คงเหลือติดลบ)":
     st.title(f"⚠️ สินค้าที่มีปัญหา [คงเหลือติดลบ -] : โซน {selected_zone}")
     
     if not df_zone.empty and "คงเหลือ" in df_zone.columns:
+        # กรองเฉพาะรายการที่คงเหลือมีเครื่องหมายลบ (-) นำหน้า
         mask_negative = df_zone["คงเหลือ"].apply(is_negative_stock)
         problem_df = df_zone[mask_negative].reset_index(drop=True)
         
         if not problem_df.empty:
             st.error(f"🚨 พบสินค้าคงเหลือติดลบทั้งหมด **{len(problem_df)} รายการ** ในโซน {selected_zone}")
             
+            # ดึงแท็กเฉพาะกลุ่มที่มีสินค้าติดลบ
             prob_tags = sorted(list(problem_df["แท็ก {Tag}"].dropna().unique()))
             selected_prob_tag = st.selectbox("🏷️ เลือกกลุ่มแท็กสินค้าที่มีปัญหา:", options=["แสดงทุกกลุ่มแท็ก"] + prob_tags)
             
