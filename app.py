@@ -7,7 +7,7 @@ from pypdf import PdfReader
 
 st.set_page_config(page_title="ระบบจัดการจำนวนสินค้าตามโซน", layout="wide")
 
-# ซ่อนปุ่มกากบาทของตัวอัปโหลดไฟล์ด้วย CSS
+# ซ่อนปุ่มกากบาทของตัวอัปโหลดไฟล์
 st.markdown("""
 <style>
 button[aria-label="Delete"] {
@@ -102,23 +102,12 @@ def clean_and_prepare_df(raw_df, source_name, target_zone):
     existing_cols = [c for c in standard_cols if c in df.columns]
     return df[existing_cols]
 
-# ฟังก์ชันตรวจสอบว่าค่าคงเหลือติดลบหรือไม่
-def is_negative_stock(val):
-    s = str(val).strip()
-    if s.startswith("-"):
-        return True
-    try:
-        num = float(s)
-        return num < 0
-    except ValueError:
-        return False
-
 if "current_df" not in st.session_state:
     st.session_state.current_df = load_database()
 if "uploader_key" not in st.session_state:
     st.session_state.uploader_key = 0
 
-# --- แถบเมนูด้านซ้าย (Sidebar) ---
+# --- แถบเมนูด้านซ้าย ---
 with st.sidebar:
     st.header("📊 จำนวนสินค้า")
     selected_zone = st.selectbox("เลือกโซนที่ต้องการเข้าดู:", options=ALL_ZONES)
@@ -195,7 +184,7 @@ with st.sidebar:
     st.subheader("⚠️ ตรวจสอบรายการ")
     view_mode = st.radio("เลือกมุมมองที่ต้องการดู:", ["📦 รายการสินค้าปกติ", "⚠️ สินค้าที่มีปัญหา (คงเหลือติดลบ)"])
 
-# --- การประมวลผลข้อมูลหน้าแดชบอร์ด ---
+# --- หน้าแดชบอร์ดหลัก ---
 df_all = st.session_state.current_df
 
 if not df_all.empty and "โซน" in df_all.columns:
@@ -203,55 +192,43 @@ if not df_all.empty and "โซน" in df_all.columns:
 else:
     df_zone = pd.DataFrame()
 
-# ================= 1. มุมมองสินค้าที่มีปัญหา (คงเหลือติดลบ) =================
 if view_mode == "⚠️ สินค้าที่มีปัญหา (คงเหลือติดลบ)":
     st.title(f"⚠️ สินค้าที่มีปัญหา [คงเหลือติดลบ -] : โซน {selected_zone}")
     
     if not df_zone.empty and "คงเหลือ" in df_zone.columns:
-        # กรองเฉพาะรายการที่คงเหลือมีเครื่องหมายลบ (-) นำหน้า
-        mask_negative = df_zone["คงเหลือ"].apply(is_negative_stock)
-        problem_df = df_zone[mask_negative].reset_index(drop=True)
+        # กรองเฉพาะรายการที่คงเหลือมีเครื่องหมายลบ '-'
+        problem_df = df_zone[df_zone["คงเหลือ"].astype(str).str.startswith("-")].reset_index(drop=True)
         
         if not problem_df.empty:
-            st.error(f"🚨 พบสินค้าคงเหลือติดลบทั้งหมด **{len(problem_df)} รายการ** ในโซน {selected_zone}")
+            st.error(f"🚨 พบสินค้าที่มีปัญหาคงเหลือติดลบทั้งหมด **{len(problem_df)} รายการ** ในโซน {selected_zone}")
             
-            # ดึงแท็กเฉพาะกลุ่มที่มีสินค้าติดลบ
-            prob_tags = sorted(list(problem_df["แท็ก {Tag}"].dropna().unique()))
-            selected_prob_tag = st.selectbox("🏷️ เลือกกลุ่มแท็กสินค้าที่มีปัญหา:", options=["แสดงทุกกลุ่มแท็ก"] + prob_tags)
-            
-            display_prob_tags = prob_tags if selected_prob_tag == "แสดงทุกกลุ่มแท็ก" else [selected_prob_tag]
-            
-            for tag in display_prob_tags:
-                tag_prob_df = problem_df[problem_df["แท็ก {Tag}"] == tag].reset_index(drop=True)
+            cols = st.columns(3)
+            for idx, row in problem_df.iterrows():
+                barcode = str(row.get("รหัสสินค้า", "")).strip()
+                sub_code = str(row.get("รหัสรอง", "")).strip()
+                name = str(row.get("ชื่อรายการสินค้า", "")).strip()
+                qty = row.get("จำนวนสั่งล่าสุด", 0)
+                stock = row.get("คงเหลือ", 0)
                 
-                with st.expander(f"🚨 แท็ก: **{tag}** (ติดลบ {len(tag_prob_df)} รายการ)", expanded=True):
-                    cols = st.columns(3)
-                    for idx, row in tag_prob_df.iterrows():
-                        barcode = str(row.get("รหัสสินค้า", "")).strip()
-                        sub_code = str(row.get("รหัสรอง", "")).strip()
-                        name = str(row.get("ชื่อรายการสินค้า", "")).strip()
-                        qty = row.get("จำนวนสั่งล่าสุด", 0)
-                        stock = row.get("คงเหลือ", 0)
-                        
-                        img_url = f"https://tkkonlineshop.com/images/products/{barcode}.jpg"
-                        web_link = f"https://tkkonlineshop.com/products/{barcode}"
-                        
-                        with cols[idx % 3]:
-                            with st.container(border=True):
-                                st.image(
-                                    img_url, 
-                                    caption=f"รหัส: {barcode}", 
-                                    use_container_width=True
-                                )
-                                st.markdown(f"**{name}**")
-                                st.caption(f"รหัสสินค้า: `{barcode}` | โซน: `{selected_zone}`")
-                                st.markdown(f"📋 **รหัสรอง (คลิกเพื่อ Copy):**")
-                                st.code(sub_code, language="text")
-                                st.markdown(f"🚨 **คงเหลือ:** :red[{stock}] | 🛒 **สั่งล่าสุด:** {qty}")
-                                st.link_button("🌐 เปิดดูบนเว็บ TKK Online", web_link, use_container_width=True)
+                img_url = f"https://tkkonlineshop.com/images/products/{barcode}.jpg"
+                web_link = f"https://tkkonlineshop.com/products/{barcode}"
+                
+                with cols[idx % 3]:
+                    with st.container(border=True):
+                        st.image(
+                            img_url, 
+                            caption=f"รหัส: {barcode}", 
+                            use_container_width=True
+                        )
+                        st.markdown(f"**{name}**")
+                        st.caption(f"รหัสสินค้า: `{barcode}` | โซน: `{selected_zone}`")
+                        st.markdown(f"📋 **รหัสรอง (คลิกเพื่อ Copy):**")
+                        st.code(sub_code, language="text")
+                        st.markdown(f"🚨 **คงเหลือ:** :red[{stock}] | 🛒 **สั่งล่าสุด:** {qty}")
+                        st.link_button("🌐 เปิดดูบนเว็บ TKK Online", web_link, use_container_width=True)
 
             st.divider()
-            st.subheader(f"📋 ตารางรายการสินค้าที่มีปัญหา [โซน {selected_zone}]")
+            st.subheader("📋 ตารางรายการสินค้าที่มีปัญหา")
             display_prob_df = problem_df.drop(columns=["ชื่อไฟล์ที่มา"], errors="ignore")
             st.dataframe(display_prob_df, use_container_width=True)
             
@@ -266,12 +243,12 @@ if view_mode == "⚠️ สินค้าที่มีปัญหา (คง
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
         else:
-            st.success(f"🎉 ยอดเยี่ยม! ไม่พบสินค้าคงเหลือติดลบในโซน {selected_zone}")
+            st.success(f"🎉 ไม่พบสินค้าคงเหลือติดลบในโซน {selected_zone}")
     else:
         st.info(f"👈 โซน {selected_zone} ยังไม่มีข้อมูลสินค้า")
 
-# ================= 2. มุมมองสินค้าปกติ =================
 else:
+    # มุมมองปกติ
     st.title(f"📦 จำนวนสินค้าประจำโซน : {selected_zone}")
 
     if not df_zone.empty:
