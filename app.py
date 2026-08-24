@@ -1,9 +1,9 @@
-import streamlit as st
-import pandas as pd
-import re
 import io
 import os
+import re
+import pandas as pd
 from pypdf import PdfReader
+import streamlit as st
 
 st.set_page_config(page_title="ระบบแยกคอลัมน์ & จัดการโซนสินค้าตามบริษัท", layout="wide")
 
@@ -43,7 +43,7 @@ def load_database():
     return pd.DataFrame()
 
 def save_database(df):
-    df.to_csv(DB_FILE, index=False)
+    df.to_csv(DB_FILE, index=False, encoding="utf-8-sig")
 
 def extract_fields_from_text(text, source_name, target_company, target_zone):
     pattern = re.compile(
@@ -119,7 +119,6 @@ if "uploader_key" not in st.session_state:
 with st.sidebar:
     st.header("🏢 เลือกระบบบริษัท")
     
-    # ดึงรายชื่อบริษัททั้งหมดที่มีในระบบ หรือค่าเริ่มต้น
     existing_companies = list(st.session_state.current_df["บริษัท"].dropna().unique()) if not st.session_state.current_df.empty and "บริษัท" in st.session_state.current_df.columns else []
     all_companies = sorted(list(set(DEFAULT_COMPANIES + existing_companies)))
     
@@ -132,7 +131,7 @@ with st.sidebar:
     st.divider()
     st.subheader(f"⚙️ จัดการ [{selected_company} - โซน {selected_zone}]")
     
-    # เมนูอัปโหลดไฟล์เข้าสู่ บริษัท และ โซน ที่เลือก
+    # อัปโหลดไฟล์เข้าโซน
     with st.expander(f"📥 เพิ่มไฟล์ข้อมูลเข้าโซน {selected_zone}", expanded=False):
         uploaded_files = st.file_uploader(
             f"เลือกไฟล์สำหรับ {selected_company} โซน {selected_zone}", 
@@ -165,7 +164,7 @@ with st.sidebar:
                 combined_new_df = pd.concat(preview_dfs, ignore_index=True)
                 st.info(f"เตรียมพร้อมบันทึก: {len(combined_new_df)} รายการ")
                 
-                if st.button(f"💾 ยืนยันบันทึกเข้าสู่ระบบ", type="primary"):
+                if st.button("💾 ยืนยันบันทึกเข้าสู่ระบบ", type="primary"):
                     if st.session_state.current_df.empty:
                         st.session_state.current_df = combined_new_df
                     else:
@@ -175,7 +174,7 @@ with st.sidebar:
                     
                     save_database(st.session_state.current_df)
                     st.session_state.uploader_key += 1
-                    st.success(f"✅ บันทึกข้อมูลเรียบร้อย!")
+                    st.success("✅ บันทึกข้อมูลเรียบร้อย!")
                     st.rerun()
 
     # เมนูลบข้อมูลเฉพาะไฟล์
@@ -190,10 +189,10 @@ with st.sidebar:
                     del_cond = (st.session_state.current_df["ชื่อไฟล์ที่มา"] == selected_remove_file) & (st.session_state.current_df["บริษัท"] == selected_company) & (st.session_state.current_df["โซน"] == selected_zone)
                     st.session_state.current_df = st.session_state.current_df[~del_cond]
                     save_database(st.session_state.current_df)
-                    st.success(f"ลบข้อมูลสำเร็จ")
+                    st.success("ลบข้อมูลสำเร็จ")
                     st.rerun()
             else:
-                st.caption(f"ยังไม่มีไฟล์ข้อมูลในโซนนี้")
+                st.caption("ยังไม่มีไฟล์ข้อมูลในโซนนี้")
         else:
             st.caption("ยังไม่มีข้อมูลในระบบ")
 
@@ -210,12 +209,9 @@ else:
 if not df_zone.empty:
     st.subheader("🏷️ รายการสินค้าจัดกลุ่มตามแท็ก {Tag}")
     
-    # ดึงแท็กทั้งหมดในโซนนี้ และจัดกลุ่มแท็กที่ชื่อซ้ำกันให้อยู่ด้วยกัน
     unique_tags = sorted(list(df_zone["แท็ก {Tag}"].dropna().unique()))
-    
     selected_tag = st.selectbox("🔍 เลือกกลุ่มแท็กเพื่อดูสินค้า:", options=["แสดงทุกกลุ่มแท็ก"] + unique_tags)
     
-    # กำหนดกลุ่มแท็กที่จะแสดง
     display_tags = unique_tags if selected_tag == "แสดงทุกกลุ่มแท็ก" else [selected_tag]
     
     for tag in display_tags:
@@ -242,7 +238,7 @@ if not df_zone.empty:
                         )
                         st.markdown(f"**{name}**")
                         st.caption(f"รหัสสินค้า: `{barcode}` | โซน: `{selected_zone}`")
-                        st.markdown(f"📋 **รหัสรอง (คลิกเพื่อ Copy):**")
+                        st.markdown("**📋 รหัสรอง (คลิกเพื่อ Copy):**")
                         st.code(sub_code, language="text")
                         st.markdown(f"📦 **คงเหลือ:** {stock} | 🛒 **สั่งล่าสุด:** {qty}")
                         st.link_button("🌐 เปิดดูบนเว็บ TKK Online", web_link, use_container_width=True)
@@ -256,10 +252,10 @@ if not df_zone.empty:
 
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        display_df.to_excel(writer, sheet_name=f"{selected_company}_{selected_zone}", index=False)
+        display_df.to_excel(writer, sheet_name=f"{selected_company}_{selected_zone}"[:31], index=False)
     
     st.download_button(
-        label=f"📥 ดาวน์โหลดไฟล์ Excel เฉพาะโซนนี้ (.xlsx)",
+        label="📥 ดาวน์โหลดไฟล์ Excel เฉพาะโซนนี้ (.xlsx)",
         data=output.getvalue(),
         file_name=f"ข้อมูล_{selected_company}_โซน_{selected_zone}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
