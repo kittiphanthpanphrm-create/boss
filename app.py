@@ -9,7 +9,7 @@ from pypdf import PdfReader
 
 st.set_page_config(page_title="ระบบแยกคอลัมน์ & แดชบอร์ดสินค้า", layout="wide")
 
-# ซ่อนปุ่มกากบาทของตัวอัปโหลดไฟล์ด้วย CSS
+# ซ่อนปุ่มกากบาทของ uploader ด้วย CSS
 st.markdown("""
 <style>
 button[aria-label="Delete"] {
@@ -90,68 +90,69 @@ def clean_and_prepare_df(raw_df, source_name):
 
 if "current_df" not in st.session_state:
     st.session_state.current_df = load_database()
-if "processed_files" not in st.session_state:
-    if "ชื่อไฟล์ที่มา" in st.session_state.current_df.columns:
-        st.session_state.processed_files = set(st.session_state.current_df["ชื่อไฟล์ที่มา"].dropna().unique())
-    else:
-        st.session_state.processed_files = set()
+if "uploader_key" not in st.session_state:
+    st.session_state.uploader_key = 0
 
-# --- แถบเมนูซ้าย ---
+# --- แถบเมนูด้านซ้าย (Sidebar) ---
 with st.sidebar:
     st.header("⚙️ จัดการระบบ")
     
-    with st.expander("📥 คลิกเพื่อเพิ่มไฟล์ข้อมูลใหม่", expanded=False):
+    with st.expander("📥 เพิ่มไฟล์ข้อมูลใหม่", expanded=False):
         uploaded_files = st.file_uploader(
             "เลือกไฟล์ (PDF, CSV, XLSX)", 
             type=["pdf", "csv", "xlsx"], 
-            accept_multiple_files=True
+            accept_multiple_files=True,
+            key=f"uploader_{st.session_state.uploader_key}"
         )
         
         if uploaded_files:
-            updated = False
-            for uploaded_file in uploaded_files:
-                if uploaded_file.name not in st.session_state.processed_files:
-                    try:
-                        new_df = pd.DataFrame()
-                        if uploaded_file.name.endswith(".pdf"):
-                            reader = PdfReader(uploaded_file)
-                            full_text = "".join([page.extract_text() + "\n" for page in reader.pages])
-                            new_df = extract_fields_from_text(full_text, uploaded_file.name)
-                        elif uploaded_file.name.endswith(".csv"):
-                            new_df = clean_and_prepare_df(pd.read_csv(uploaded_file), uploaded_file.name)
-                        elif uploaded_file.name.endswith(".xlsx"):
-                            new_df = clean_and_prepare_df(pd.read_excel(uploaded_file), uploaded_file.name)
-                        
-                        if not new_df.empty:
-                            if st.session_state.current_df.empty:
-                                st.session_state.current_df = new_df
-                            else:
-                                st.session_state.current_df = pd.concat([st.session_state.current_df, new_df], ignore_index=True)
-                                if "รหัสสินค้า" in st.session_state.current_df.columns:
-                                    st.session_state.current_df.drop_duplicates(subset=["รหัสสินค้า"], keep="last", inplace=True)
-                            
-                            st.session_state.processed_files.add(uploaded_file.name)
-                            updated = True
-                    except Exception as e:
-                        st.error(f"ไฟล์ {uploaded_file.name} ผิดพลาด: {e}")
+            preview_dfs = []
+            for u_file in uploaded_files:
+                try:
+                    if u_file.name.endswith(".pdf"):
+                        reader = PdfReader(u_file)
+                        full_text = "".join([page.extract_text() + "\n" for page in reader.pages])
+                        t_df = extract_fields_from_text(full_text, u_file.name)
+                    elif u_file.name.endswith(".csv"):
+                        t_df = clean_and_prepare_df(pd.read_csv(u_file), u_file.name)
+                    elif u_file.name.endswith(".xlsx"):
+                        t_df = clean_and_prepare_df(pd.read_excel(u_file), u_file.name)
+                    
+                    if not t_df.empty:
+                        preview_dfs.append(t_df)
+                except Exception as e:
+                    st.error(f"ไฟล์ {u_file.name} ผิดพลาด: {e}")
             
-            if updated:
-                save_database(st.session_state.current_df)
-                st.success("บันทึกข้อมูลเข้าฐานข้อมูลเรียบร้อย!")
+            if preview_dfs:
+                combined_new_df = pd.concat(preview_dfs, ignore_index=True)
+                st.info(f"เตรียมพร้อมบันทึก: {len(combined_new_df)} รายการ")
+                
+                # ปุ่มกดบันทึกเข้าสู่ระบบจริง
+                if st.button("💾 ยืนยันบันทึกข้อมูลเข้าสู่ระบบ", type="primary"):
+                    if st.session_state.current_df.empty:
+                        st.session_state.current_df = combined_new_df
+                    else:
+                        st.session_state.current_df = pd.concat([st.session_state.current_df, combined_new_df], ignore_index=True)
+                        if "รหัสสินค้า" in st.session_state.current_df.columns:
+                            st.session_state.current_df.drop_duplicates(subset=["รหัสสินค้า"], keep="last", inplace=True)
+                    
+                    save_database(st.session_state.current_df)
+                    st.session_state.uploader_key += 1  # เคลียร์ตัวอัปโหลด
+                    st.success("✅ บันทึกข้อมูลเรียบร้อย!")
+                    st.rerun()
 
     st.divider()
     
-    # เมนูลบข้อมูลเฉพาะไฟล์ หรือล้างทั้งหมด
+    # เมนูลบข้อมูล
     with st.expander("🗑️ ลบข้อมูลในระบบ", expanded=False):
         if not st.session_state.current_df.empty and "ชื่อไฟล์ที่มา" in st.session_state.current_df.columns:
             available_files = list(st.session_state.current_df["ชื่อไฟล์ที่มา"].dropna().unique())
             if available_files:
                 selected_remove_file = st.selectbox("เลือกไฟล์ที่ต้องการลบข้อมูลออก:", options=available_files)
-                if st.button("🗑️ ยืนยันลบข้อมูลของไฟล์นี้"):
+                if st.button("🗑️ ลบข้อมูลของไฟล์นี้"):
                     st.session_state.current_df = st.session_state.current_df[st.session_state.current_df["ชื่อไฟล์ที่มา"] != selected_remove_file]
-                    if selected_remove_file in st.session_state.processed_files:
-                        st.session_state.processed_files.remove(selected_remove_file)
                     save_database(st.session_state.current_df)
+                    st.success(f"ลบข้อมูลจากไฟล์ {selected_remove_file} สำเร็จ")
                     st.rerun()
             st.divider()
             
@@ -160,7 +161,6 @@ with st.sidebar:
             if os.path.exists(DB_FILE):
                 os.remove(DB_FILE)
             st.session_state.current_df = pd.DataFrame()
-            st.session_state.processed_files = set()
             st.rerun()
 
 # --- แดชบอร์ดหลัก ---
@@ -231,4 +231,4 @@ if not df.empty:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 else:
-    st.info("👈 คลิกที่เมนูด้านซ้ายเพื่อกดเปิดกล่อง **'📥 คลิกเพื่อเพิ่มไฟล์ข้อมูลใหม่'** และนำเข้าไฟล์ข้อมูล")
+    st.info("👈 คลิกที่แถบเมนูด้านซ้าย **'📥 เพิ่มไฟล์ข้อมูลใหม่'** เพื่อเลือกไฟล์แล้วกดปุ่มบันทึก")
