@@ -41,14 +41,12 @@ def save_database(df):
 
 def parse_tag_and_clean_name(raw_text):
     text = str(raw_text).replace("•", "").strip()
-    # ค้นหาแท็กในวงเล็บปีกกา {Tag} ก่อน
     m_curly = re.search(r'\{([^}]+)\}', text)
     if m_curly:
         tag_val = m_curly.group(1).strip()
         cleaned_name = re.sub(r'\{[^}]+\}', '', text).strip()
         return f"{{{tag_val}}}", cleaned_name
     
-    # ถ้าไม่มีวงเล็บปีกกา ให้หาในวงเล็บก้ามปู [Tag] เช่น [PV]
     m_square = re.search(r'\[([^\]]+)\]', text)
     if m_square:
         tag_val = m_square.group(1).strip()
@@ -89,35 +87,35 @@ def extract_fields_from_text(text, source_name, target_zone):
 def clean_and_prepare_df(raw_df, source_name, target_zone):
     df = raw_df.copy()
     
-    # 1. ทำความสะอาดโซน
+    # โซน
     zone_col = next((c for c in df.columns if "โซน" in str(c)), None)
     if zone_col:
         df["โซน"] = df[zone_col].astype(str).str.replace("โซน", "", regex=False).str.replace(":", "", regex=False).str.strip().str.upper()
     else:
         df["โซน"] = target_zone.upper()
         
-    # 2. ทำความสะอาดรหัสสินค้า
+    # รหัสสินค้า
     barcode_col = next((c for c in df.columns if "รหัสสินค้า" in str(c) or str(c).strip() == "รหัส" or "บาร์โค้ด" in str(c)), None)
     if barcode_col:
         df["รหัสสินค้า"] = df[barcode_col].astype(str).str.replace(":", "", regex=False).str.replace(r'\.0$', '', regex=True).str.strip()
     elif len(df.columns) > 2:
         df["รหัสสินค้า"] = df.iloc[:, 2].astype(str).str.replace(":", "", regex=False).str.replace(r'\.0$', '', regex=True).str.strip()
 
-    # 3. ทำความสะอาดรหัสรอง
+    # รหัสรอง
     sub_col = next((c for c in df.columns if "รหัสรอง" in str(c)), None)
     if sub_col:
         df["รหัสรอง"] = df[sub_col].astype(str).str.replace(":", "", regex=False).str.replace(r'\.0$', '', regex=True).str.strip()
     elif len(df.columns) > 3:
         df["รหัสรอง"] = df.iloc[:, 3].astype(str).str.replace(":", "", regex=False).str.replace(r'\.0$', '', regex=True).str.strip()
 
-    # 4. ดึงยอดคงเหลือ
+    # คงเหลือ
     stock_col = next((c for c in df.columns if "คงเหลือ" in str(c)), None)
     if stock_col:
         df["คงเหลือ"] = df[stock_col].astype(str).str.replace(":", "", regex=False).str.strip()
     elif len(df.columns) > 1:
         df["คงเหลือ"] = df.iloc[:, 1].astype(str).str.replace(":", "", regex=False).str.strip()
 
-    # 5. ดึงชื่อรายการสินค้าและแยกแท็ก
+    # ชื่อและแท็ก
     name_col = next((c for c in df.columns if any(k in str(c) for k in ["ชื่อ", "รายละ", "ยศ", "รายการ"])), None)
     if name_col is None and len(df.columns) > 4:
         name_col = df.columns[4]
@@ -152,12 +150,42 @@ def is_negative_stock(val):
     except ValueError:
         return False
 
+# ฟังก์ชันแสดงการ์ดสินค้าแบบ 3 คอลัมน์
+def render_product_cards(items_df, current_zone, is_problem=False):
+    cols = st.columns(3)
+    for idx, row in items_df.iterrows():
+        barcode = str(row.get("รหัสสินค้า", "")).strip()
+        sub_code = str(row.get("รหัสรอง", "")).strip()
+        name = str(row.get("ชื่อรายการสินค้า", "")).strip()
+        qty = row.get("จำนวนสั่งล่าสุด", 0)
+        stock = row.get("คงเหลือ", 0)
+        
+        img_url = f"https://tkkonlineshop.com/images/products/{barcode}.jpg"
+        web_link = f"https://tkkonlineshop.com/products/{barcode}"
+        
+        with cols[idx % 3]:
+            with st.container(border=True):
+                st.image(
+                    img_url, 
+                    caption=f"รหัส: {barcode}", 
+                    use_container_width=True
+                )
+                st.markdown(f"**{name}**")
+                st.caption(f"รหัสสินค้า: `{barcode}` | โซน: `{current_zone}`")
+                st.markdown(f"📋 **รหัสรอง (คลิกเพื่อ Copy):**")
+                st.code(sub_code, language="text")
+                if is_problem:
+                    st.markdown(f"🚨 **คงเหลือ:** :red[{stock}] | 🛒 **สั่งล่าสุด:** {qty}")
+                else:
+                    st.markdown(f"📦 **คงเหลือ:** {stock} | 🛒 **สั่งล่าสุด:** {qty}")
+                st.link_button("🌐 เปิดดูบนเว็บ TKK Online", web_link, use_container_width=True)
+
 if "current_df" not in st.session_state:
     st.session_state.current_df = load_database()
 if "uploader_key" not in st.session_state:
     st.session_state.uploader_key = 0
 
-# --- แถบเมนูด้านซ้าย ---
+# --- แถบเมนูด้านซ้าย (Sidebar) ---
 with st.sidebar:
     st.header("📊 จำนวนสินค้า")
     selected_zone = st.selectbox("เลือกโซนที่ต้องการเข้าดู:", options=ALL_ZONES)
@@ -238,7 +266,7 @@ if not df_all.empty and "โซน" in df_all.columns:
 else:
     df_zone = pd.DataFrame()
 
-# ================= 1. มุมมองสินค้าที่มีปัญหา =================
+# ================= 1. มุมมองสินค้าที่มีปัญหา (คงเหลือติดลบ) =================
 if view_mode == "⚠️ สินค้าที่มีปัญหา (คงเหลือติดลบ)":
     st.title(f"⚠️ สินค้าที่มีปัญหา [คงเหลือติดลบ -] : โซน {selected_zone}")
     
@@ -247,37 +275,22 @@ if view_mode == "⚠️ สินค้าที่มีปัญหา (คง
         problem_df = df_zone[mask_negative].reset_index(drop=True)
         
         if not problem_df.empty:
-            prob_tags = sorted(list(problem_df["แท็ก {Tag}"].dropna().unique()))
-            selected_prob_tag = st.selectbox("🏷️ เลือกกลุ่มแท็กสินค้าที่ต้องการดู:", options=prob_tags)
+            st.error(f"🚨 พบสินค้าคงเหลือติดลบทั้งหมด **{len(problem_df)} รายการ** ในโซน {selected_zone}")
             
-            if selected_prob_tag:
+            prob_tags = sorted(list(problem_df["แท็ก {Tag}"].dropna().unique()))
+            tag_options = ["📌 รวมทุกแท็ก (จัดกลุ่มตามแท็กอัตโนมัติ)"] + prob_tags
+            selected_prob_tag = st.selectbox("🏷️ เลือกกลุ่มแท็กสินค้าที่มีปัญหา:", options=tag_options)
+            
+            # ถ้าเลือกรวมทุกแท็ก ให้วนลูปจัดกลุ่มแท็กที่เหมือนกัน
+            if selected_prob_tag == "📌 รวมทุกแท็ก (จัดกลุ่มตามแท็กอัตโนมัติ)":
+                for tag in prob_tags:
+                    group_prob_df = problem_df[problem_df["แท็ก {Tag}"] == tag].reset_index(drop=True)
+                    with st.expander(f"🚨 แท็ก: **{tag}** (รวม {len(group_prob_df)} รายการ)", expanded=True):
+                        render_product_cards(group_prob_df, selected_zone, is_problem=True)
+            else:
                 filtered_prob_df = problem_df[problem_df["แท็ก {Tag}"] == selected_prob_tag].reset_index(drop=True)
                 st.write(f"พบ **{len(filtered_prob_df)} รายการ** ที่ติดลบ ในแท็ก `{selected_prob_tag}`")
-                
-                cols = st.columns(3)
-                for idx, row in filtered_prob_df.iterrows():
-                    barcode = str(row.get("รหัสสินค้า", "")).strip()
-                    sub_code = str(row.get("รหัสรอง", "")).strip()
-                    name = str(row.get("ชื่อรายการสินค้า", "")).strip()
-                    qty = row.get("จำนวนสั่งล่าสุด", 0)
-                    stock = row.get("คงเหลือ", 0)
-                    
-                    img_url = f"https://tkkonlineshop.com/images/products/{barcode}.jpg"
-                    web_link = f"https://tkkonlineshop.com/products/{barcode}"
-                    
-                    with cols[idx % 3]:
-                        with st.container(border=True):
-                            st.image(
-                                img_url, 
-                                caption=f"รหัส: {barcode}", 
-                                use_container_width=True
-                            )
-                            st.markdown(f"**{name}**")
-                            st.caption(f"รหัสสินค้า: `{barcode}` | โซน: `{selected_zone}`")
-                            st.markdown(f"📋 **รหัสรอง (คลิกเพื่อ Copy):**")
-                            st.code(sub_code, language="text")
-                            st.markdown(f"🚨 **คงเหลือ:** :red[{stock}] | 🛒 **สั่งล่าสุด:** {qty}")
-                            st.link_button("🌐 เปิดดูบนเว็บ TKK Online", web_link, use_container_width=True)
+                render_product_cards(filtered_prob_df, selected_zone, is_problem=True)
 
             st.divider()
             st.subheader(f"📋 ตารางรายการสินค้าที่มีปัญหา [โซน {selected_zone}]")
@@ -308,36 +321,19 @@ else:
         
         if "แท็ก {Tag}" in df_zone.columns:
             tag_list = sorted(list(df_zone["แท็ก {Tag}"].dropna().unique()))
-            selected_tag = st.selectbox("🏷️ เลือกกลุ่มแท็กสินค้าที่ต้องการดู:", options=tag_list)
+            tag_options = ["📌 รวมทุกแท็ก (จัดกลุ่มตามแท็กอัตโนมัติ)"] + tag_list
+            selected_tag = st.selectbox("🏷️ เลือกกลุ่มแท็กสินค้าที่ต้องการดู:", options=tag_options)
             
-            if selected_tag:
+            # ถ้าเลือกรวมทุกแท็ก ให้วนลูปจัดกลุ่มแท็กที่เหมือนกัน
+            if selected_tag == "📌 รวมทุกแท็ก (จัดกลุ่มตามแท็กอัตโนมัติ)":
+                for tag in tag_list:
+                    group_df = df_zone[df_zone["แท็ก {Tag}"] == tag].reset_index(drop=True)
+                    with st.expander(f"📦 แท็ก: **{tag}** (รวม {len(group_df)} รายการ)", expanded=True):
+                        render_product_cards(group_df, selected_zone, is_problem=False)
+            else:
                 filtered_df = df_zone[df_zone["แท็ก {Tag}"] == selected_tag].reset_index(drop=True)
                 st.write(f"พบ **{len(filtered_df)} รายการ** ในแท็ก `{selected_tag}` (โซน {selected_zone})")
-                
-                cols = st.columns(3)
-                for idx, row in filtered_df.iterrows():
-                    barcode = str(row.get("รหัสสินค้า", "")).strip()
-                    sub_code = str(row.get("รหัสรอง", "")).strip()
-                    name = str(row.get("ชื่อรายการสินค้า", "")).strip()
-                    qty = row.get("จำนวนสั่งล่าสุด", 0)
-                    stock = row.get("คงเหลือ", 0)
-                    
-                    img_url = f"https://tkkonlineshop.com/images/products/{barcode}.jpg"
-                    web_link = f"https://tkkonlineshop.com/products/{barcode}"
-                    
-                    with cols[idx % 3]:
-                        with st.container(border=True):
-                            st.image(
-                                img_url, 
-                                caption=f"รหัส: {barcode}", 
-                                use_container_width=True
-                            )
-                            st.markdown(f"**{name}**")
-                            st.caption(f"รหัสสินค้า: `{barcode}` | โซน: `{selected_zone}`")
-                            st.markdown(f"📋 **รหัสรอง (คลิกเพื่อ Copy):**")
-                            st.code(sub_code, language="text")
-                            st.markdown(f"📦 **คงเหลือ:** {stock} | 🛒 **สั่งล่าสุด:** {qty}")
-                            st.link_button("🌐 เปิดดูบนเว็บ TKK Online", web_link, use_container_width=True)
+                render_product_cards(filtered_df, selected_zone, is_problem=False)
 
         st.divider()
 
