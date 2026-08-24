@@ -50,9 +50,10 @@ def extract_fields_from_text(text, source_name, target_zone):
     for m in matches:
         raw_tag = m[4] if m[4] else ""
         extracted_zone = m[9].strip() if m[9] else target_zone
+        barcode = str(m[1]).strip()
         data.append({
             "#": m[0],
-            "รหัสสินค้า": str(m[1]).strip(),
+            "รหัสสินค้า": barcode,
             "รหัสรอง": str(m[2]).strip(),
             "ชื่อรายการสินค้า": m[3].strip(),
             "แท็ก {Tag}": f"{{{raw_tag}}}" if raw_tag else "-",
@@ -61,6 +62,7 @@ def extract_fields_from_text(text, source_name, target_zone):
             "โซน": extracted_zone,
             "คงเหลือ": str(float(m[6])) if m[6] else "0",
             "สถานะ": m[7] if m[7] else "ปกติ",
+            "ลิงก์ร้านค้า": f"https://tkkonlineshop.com/products/{barcode}",
             "ชื่อไฟล์ที่มา": source_name
         })
     return pd.DataFrame(data)
@@ -95,8 +97,11 @@ def clean_and_prepare_df(raw_df, source_name, target_zone):
     else:
         df["โซน"] = df["โซน"].fillna(target_zone).astype(str).str.strip()
         
+    if "รหัสสินค้า" in df.columns:
+        df["ลิงก์ร้านค้า"] = df["รหัสสินค้า"].apply(lambda b: f"https://tkkonlineshop.com/products/{b}")
+        
     df["ชื่อไฟล์ที่มา"] = source_name
-    standard_cols = ["รหัสสินค้า", "รหัสรอง", "ชื่อรายการสินค้า", "แท็ก {Tag}", "หน่วยนับ", "จำนวนสั่งล่าสุด", "โซน", "คงเหลือ", "สถานะ", "ชื่อไฟล์ที่มา"]
+    standard_cols = ["รหัสสินค้า", "รหัสรอง", "ชื่อรายการสินค้า", "แท็ก {Tag}", "หน่วยนับ", "จำนวนสั่งล่าสุด", "โซน", "คงเหลือ", "สถานะ", "ลิงก์ร้านค้า", "ชื่อไฟล์ที่มา"]
     existing_cols = [c for c in standard_cols if c in df.columns]
     return df[existing_cols]
 
@@ -136,7 +141,6 @@ with st.sidebar:
                         t_df = clean_and_prepare_df(pd.read_excel(u_file), u_file.name, selected_zone)
                     
                     if not t_df.empty:
-                        # กำหนดโซนให้ตรงกับโซนปัจจุบันหากยังไม่ถูกระบุ
                         t_df["โซน"] = t_df["โซน"].replace({"": selected_zone, "-": selected_zone}).fillna(selected_zone)
                         preview_dfs.append(t_df)
                 except Exception as e:
@@ -167,7 +171,6 @@ with st.sidebar:
             if zone_files:
                 selected_remove_file = st.selectbox("เลือกไฟล์ที่ต้องการลบ:", options=zone_files)
                 if st.button("🗑️ ยืนยันลบไฟล์นี้"):
-                    # ลบเฉพาะข้อมูลที่เป็นของไฟล์นี้ในโซนนี้
                     condition = (st.session_state.current_df["ชื่อไฟล์ที่มา"] == selected_remove_file) & (st.session_state.current_df["โซน"] == selected_zone)
                     st.session_state.current_df = st.session_state.current_df[~condition]
                     save_database(st.session_state.current_df)
@@ -189,7 +192,6 @@ else:
     df_zone = pd.DataFrame()
 
 if not df_zone.empty:
-    # --- เลือกแท็กเพื่อดูการ์ดรูปภาพ ---
     st.subheader("🖼️ แสดงรายการสินค้าและรูปภาพ")
     
     if "แท็ก {Tag}" in df_zone.columns:
@@ -209,6 +211,7 @@ if not df_zone.empty:
                 stock = row.get("คงเหลือ", 0)
                 
                 img_url = f"https://tkkonlineshop.com/images/products/{barcode}.jpg"
+                web_link = f"https://tkkonlineshop.com/products/{barcode}"
                 
                 with cols[idx % 3]:
                     with st.container(border=True):
@@ -222,6 +225,7 @@ if not df_zone.empty:
                         st.markdown(f"📋 **รหัสรอง (คลิกเพื่อ Copy):**")
                         st.code(sub_code, language="text")
                         st.markdown(f"📦 **คงเหลือ:** {stock} | 🛒 **สั่งล่าสุด:** {qty}")
+                        st.link_button("🌐 เปิดดูบนเว็บ TKK Online", web_link, use_container_width=True)
 
     st.divider()
 
