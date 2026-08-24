@@ -87,52 +87,59 @@ if "processed_files" not in st.session_state:
 
 # --- แถบเมนูด้านซ้าย (Sidebar) สำหรับจัดการอัปโหลด ---
 with st.sidebar:
-    st.header("⚙️ จัดการไฟล์ข้อมูล")
-    uploaded_files = st.file_uploader(
-        "📂 นำเข้าไฟล์ (PDF, CSV, XLSX)", 
-        type=["pdf", "csv", "xlsx"], 
-        accept_multiple_files=True
-    )
+    st.header("⚙️ จัดการระบบ")
     
-    if uploaded_files:
-        updated = False
-        for uploaded_file in uploaded_files:
-            if uploaded_file.name not in st.session_state.processed_files:
-                try:
-                    new_df = pd.DataFrame()
-                    if uploaded_file.name.endswith(".pdf"):
-                        reader = PdfReader(uploaded_file)
-                        full_text = "".join([page.extract_text() + "\n" for page in reader.pages])
-                        new_df = extract_fields_from_text(full_text)
-                    elif uploaded_file.name.endswith(".csv"):
-                        new_df = clean_and_prepare_df(pd.read_csv(uploaded_file))
-                    elif uploaded_file.name.endswith(".xlsx"):
-                        new_df = clean_and_prepare_df(pd.read_excel(uploaded_file))
-                    
-                    if not new_df.empty:
-                        if st.session_state.current_df.empty:
-                            st.session_state.current_df = new_df
-                        else:
-                            st.session_state.current_df = pd.concat([st.session_state.current_df, new_df], ignore_index=True)
-                            if "รหัสสินค้า" in st.session_state.current_df.columns:
-                                st.session_state.current_df.drop_duplicates(subset=["รหัสสินค้า"], keep="last", inplace=True)
-                        
-                        st.session_state.processed_files.add(uploaded_file.name)
-                        updated = True
-                except Exception as e:
-                    st.error(f"ไฟล์ {uploaded_file.name} ผิดพลาด: {e}")
+    # ซ่อน/แสดงกล่องอัปโหลดด้วย Popover/Expander เพื่อป้องกันการกดโดน
+    with st.expander("📥 คลิกเพื่อเพิ่มไฟล์ข้อมูลใหม่", expanded=False):
+        uploaded_files = st.file_uploader(
+            "เลือกไฟล์ (PDF, CSV, XLSX)", 
+            type=["pdf", "csv", "xlsx"], 
+            accept_multiple_files=True
+        )
         
-        if updated:
-            save_database(st.session_state.current_df)
-            st.success("บันทึกข้อมูลเข้าฐานข้อมูลเรียบร้อย!")
+        if uploaded_files:
+            updated = False
+            for uploaded_file in uploaded_files:
+                if uploaded_file.name not in st.session_state.processed_files:
+                    try:
+                        new_df = pd.DataFrame()
+                        if uploaded_file.name.endswith(".pdf"):
+                            reader = PdfReader(uploaded_file)
+                            full_text = "".join([page.extract_text() + "\n" for page in reader.pages])
+                            new_df = extract_fields_from_text(full_text)
+                        elif uploaded_file.name.endswith(".csv"):
+                            new_df = clean_and_prepare_df(pd.read_csv(uploaded_file))
+                        elif uploaded_file.name.endswith(".xlsx"):
+                            new_df = clean_and_prepare_df(pd.read_excel(uploaded_file))
+                        
+                        if not new_df.empty:
+                            if st.session_state.current_df.empty:
+                                st.session_state.current_df = new_df
+                            else:
+                                st.session_state.current_df = pd.concat([st.session_state.current_df, new_df], ignore_index=True)
+                                if "รหัสสินค้า" in st.session_state.current_df.columns:
+                                    st.session_state.current_df.drop_duplicates(subset=["รหัสสินค้า"], keep="last", inplace=True)
+                            
+                            st.session_state.processed_files.add(uploaded_file.name)
+                            updated = True
+                    except Exception as e:
+                        st.error(f"ไฟล์ {uploaded_file.name} ผิดพลาด: {e}")
+            
+            if updated:
+                save_database(st.session_state.current_df)
+                st.success("บันทึกข้อมูลเข้าฐานข้อมูลเรียบร้อย!")
 
     st.divider()
-    if st.button("🗑️ ล้างข้อมูลทั้งหมดในระบบ"):
-        if os.path.exists(DB_FILE):
-            os.remove(DB_FILE)
-        st.session_state.current_df = pd.DataFrame()
-        st.session_state.processed_files = set()
-        st.rerun()
+    
+    # เพิ่มกล่องยืนยันก่อนล้างข้อมูล
+    with st.expander("🗑️ ล้างฐานข้อมูล", expanded=False):
+        st.caption("การล้างข้อมูลจะไม่สามารถย้อนกลับได้")
+        if st.button("ยืนยันการล้างข้อมูลทั้งหมด", type="primary"):
+            if os.path.exists(DB_FILE):
+                os.remove(DB_FILE)
+            st.session_state.current_df = pd.DataFrame()
+            st.session_state.processed_files = set()
+            st.rerun()
 
 # --- หน้าแดชบอร์ดหลัก ---
 st.title("📦 ระบบจัดการและแดชบอร์ดข้อมูลสินค้า")
@@ -204,4 +211,4 @@ if not df.empty:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 else:
-    st.info("👈 กรุณาอัปโหลดไฟล์ข้อมูล (PDF, Excel, CSV) ที่แถบเมนูด้านซ้ายมือเพื่อเริ่มต้น")
+    st.info("👈 คลิกที่เมนูด้านซ้ายเพื่อกดเปิดกล่อง **'📥 คลิกเพื่อเพิ่มไฟล์ข้อมูลใหม่'** และนำเข้าไฟล์ข้อมูล")
