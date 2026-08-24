@@ -39,6 +39,24 @@ def load_database():
 def save_database(df):
     df.to_csv(DB_FILE, index=False)
 
+def parse_tag_and_clean_name(raw_text):
+    text = str(raw_text).replace("•", "").strip()
+    # ค้นหาแท็กในวงเล็บปีกกา {Tag} ก่อน
+    m_curly = re.search(r'\{([^}]+)\}', text)
+    if m_curly:
+        tag_val = m_curly.group(1).strip()
+        cleaned_name = re.sub(r'\{[^}]+\}', '', text).strip()
+        return f"{{{tag_val}}}", cleaned_name
+    
+    # ถ้าไม่มีวงเล็บปีกกา ให้หาในวงเล็บก้ามปู [Tag] เช่น [PV]
+    m_square = re.search(r'\[([^\]]+)\]', text)
+    if m_square:
+        tag_val = m_square.group(1).strip()
+        cleaned_name = re.sub(r'\[[^\]]+\]', '', text).strip()
+        return f"{{{tag_val}}}", cleaned_name
+        
+    return "{ทั่วไป}", text
+
 def extract_fields_from_text(text, source_name, target_zone):
     pattern = re.compile(
         r'(\d{4,5})\s+รหัส\s*:\s*(\d+)\s*รหัสรอง\s*:\s*(\d+)[•\s\-]*(.*?)(?:\{([^}]+)\})?\s*หน่วยนับ\s*:\s*([^คง]+)คงเหลือ\s*:\s*([\-\d\.]+)\s*(เลิกขาย|ขาย)?\s*(\d+)\s*โซน\s*:\s*([A-Za-z0-9]+)',
@@ -47,15 +65,18 @@ def extract_fields_from_text(text, source_name, target_zone):
     matches = pattern.findall(text)
     data = []
     for m in matches:
-        raw_tag = m[4].strip() if m[4] else ""
+        raw_name = m[3].strip()
+        tag, clean_name = parse_tag_and_clean_name(raw_name)
+        if m[4]:
+            tag = f"{{{m[4].strip()}}}"
         extracted_zone = m[9].strip() if m[9] else target_zone
         barcode = str(m[1]).strip()
         data.append({
             "#": m[0],
             "รหัสสินค้า": barcode,
             "รหัสรอง": str(m[2]).strip(),
-            "ชื่อรายการสินค้า": m[3].strip(),
-            "แท็ก {Tag}": f"{{{raw_tag}}}" if raw_tag else "{ทั่วไป}",
+            "ชื่อรายการสินค้า": clean_name,
+            "แท็ก {Tag}": tag,
             "หน่วยนับ": m[5].strip(),
             "จำนวนสั่งล่าสุด": str(int(m[8])) if m[8].isdigit() else "0",
             "โซน": extracted_zone.upper(),
@@ -68,43 +89,43 @@ def extract_fields_from_text(text, source_name, target_zone):
 def clean_and_prepare_df(raw_df, source_name, target_zone):
     df = raw_df.copy()
     
+    # 1. ทำความสะอาดโซน
     zone_col = next((c for c in df.columns if "โซน" in str(c)), None)
     if zone_col:
         df["โซน"] = df[zone_col].astype(str).str.replace("โซน", "", regex=False).str.replace(":", "", regex=False).str.strip().str.upper()
     else:
         df["โซน"] = target_zone.upper()
         
+    # 2. ทำความสะอาดรหัสสินค้า
     barcode_col = next((c for c in df.columns if "รหัสสินค้า" in str(c) or str(c).strip() == "รหัส" or "บาร์โค้ด" in str(c)), None)
     if barcode_col:
         df["รหัสสินค้า"] = df[barcode_col].astype(str).str.replace(":", "", regex=False).str.replace(r'\.0$', '', regex=True).str.strip()
     elif len(df.columns) > 2:
         df["รหัสสินค้า"] = df.iloc[:, 2].astype(str).str.replace(":", "", regex=False).str.replace(r'\.0$', '', regex=True).str.strip()
 
+    # 3. ทำความสะอาดรหัสรอง
     sub_col = next((c for c in df.columns if "รหัสรอง" in str(c)), None)
     if sub_col:
         df["รหัสรอง"] = df[sub_col].astype(str).str.replace(":", "", regex=False).str.replace(r'\.0$', '', regex=True).str.strip()
     elif len(df.columns) > 3:
         df["รหัสรอง"] = df.iloc[:, 3].astype(str).str.replace(":", "", regex=False).str.replace(r'\.0$', '', regex=True).str.strip()
 
+    # 4. ดึงยอดคงเหลือ
     stock_col = next((c for c in df.columns if "คงเหลือ" in str(c)), None)
     if stock_col:
         df["คงเหลือ"] = df[stock_col].astype(str).str.replace(":", "", regex=False).str.strip()
     elif len(df.columns) > 1:
         df["คงเหลือ"] = df.iloc[:, 1].astype(str).str.replace(":", "", regex=False).str.strip()
 
+    # 5. ดึงชื่อรายการสินค้าและแยกแท็ก
     name_col = next((c for c in df.columns if any(k in str(c) for k in ["ชื่อ", "รายละ", "ยศ", "รายการ"])), None)
     if name_col is None and len(df.columns) > 4:
         name_col = df.columns[4]
 
     if name_col:
-        def get_tag(x):
-            m = re.search(r'\{([^}]+)\}', str(x))
-            return f"{{{m.group(1).strip()}}}" if m else "{ทั่วไป}"
-        def get_name(x):
-            return re.sub(r'\{[^}]+\}', '', str(x)).replace("•", "").strip()
-            
-        df["แท็ก {Tag}"] = df[name_col].apply(get_tag)
-        df["ชื่อรายการสินค้า"] = df[name_col].apply(get_name)
+        parsed_results = df[name_col].apply(parse_tag_and_clean_name)
+        df["แท็ก {Tag}"] = [res[0] for res in parsed_results]
+        df["ชื่อรายการสินค้า"] = [res[1] for res in parsed_results]
     else:
         df["แท็ก {Tag}"] = "{ทั่วไป}"
         df["ชื่อรายการสินค้า"] = "-"
