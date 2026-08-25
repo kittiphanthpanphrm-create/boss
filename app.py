@@ -344,7 +344,7 @@ elif menu == "📑 จัดการสินค้า (รายโซน)":
         col_s, col_v = st.columns([2, 1])
         with col_s:
             stock_ranges = [
-                "ทั้งหมด", "-1000 ถึง 0 (รวมค่า 0 และติดลบ)", "1-10", "10-20",
+                "ทั้งหมด", "-1000 ถึง 0", "1-10", "10-20",
                 "20-30", "30-40", "40-50", "50-100", "100-200"
             ]
             selected_range = st.select_slider("🔢 เลือกช่วงจำนวนสต็อกคงเหลือ:", options=stock_ranges, value="ทั้งหมด")
@@ -355,13 +355,13 @@ elif menu == "📑 จัดการสินค้า (รายโซน)":
         filtered_df = df_zone.copy()
         numeric_stocks = filtered_df["คงเหลือ"].apply(parse_numeric_stock)
 
-        # เงื่อนไขการกรอง: อ่านค่าตั้งแต่ -1000 ไล่ลงมาถึงทุกค่าที่แสดง 0
-        if selected_range == "-1000 ถึง 0 (รวมค่า 0 และติดลบ)":
+        # เงื่อนไขการกรอง: อ่านค่าตั้งแต่ -1000 ไล่ลงมาถึงทุกค่าที่แสดง 0 พร้อมเรียงลำดับติดลบมากที่สุดขึ้นก่อน
+        if selected_range == "-1000 ถึง 0":
             mask = (numeric_stocks >= -1000) & (numeric_stocks <= 0)
-            filtered_df = filtered_df[mask]
-            # จัดเรียงจากติดลบมากที่สุดไล่ลงมาหา 0
-            filtered_df["_sort_stock"] = filtered_df["คงเหลือ"].apply(parse_numeric_stock)
-            filtered_df = filtered_df.sort_values(by="_sort_stock", ascending=True).drop(columns=["_sort_stock"])
+            filtered_df = filtered_df[mask].copy()
+            filtered_df["_sort_num"] = filtered_df["คงเหลือ"].apply(parse_numeric_stock)
+            # เรียงจากติดลบมากที่สุดขึ้นก่อน (เช่น -96, -72, -5, 0)
+            filtered_df = filtered_df.sort_values(by="_sort_num", ascending=True).drop(columns=["_sort_num"])
         elif selected_range == "1-10":
             filtered_df = filtered_df[(numeric_stocks >= 1) & (numeric_stocks <= 10)]
         elif selected_range == "10-20":
@@ -444,7 +444,11 @@ elif menu == "⚠️ สินค้าที่มีปัญหา (คงเ
     
     if not df_zone.empty and "คงเหลือ" in df_zone.columns:
         numeric_stocks = df_zone["คงเหลือ"].apply(parse_numeric_stock)
-        problem_df = df_zone[numeric_stocks < 0].reset_index(drop=True)
+        problem_df = df_zone[numeric_stocks < 0].copy()
+        
+        # เรียงลำดับติดลบมากที่สุดขึ้นก่อน
+        problem_df["_sort_num"] = problem_df["คงเหลือ"].apply(parse_numeric_stock)
+        problem_df = problem_df.sort_values(by="_sort_num", ascending=True).drop(columns=["_sort_num"]).reset_index(drop=True)
         
         if not problem_df.empty:
             st.error(f"🚨 พบสินค้าคงเหลือติดลบทั้งหมด **{len(problem_df)} รายการ** ในโซน {selected_zone}")
