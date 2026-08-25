@@ -344,7 +344,7 @@ elif menu == "📑 จัดการสินค้า (รายโซน)":
         col_s, col_v = st.columns([2, 1])
         with col_s:
             stock_ranges = [
-                "ทั้งหมด", "-1000 ถึง 0", "1-10", "10-20",
+                "ทั้งหมด", "-1000 ถึง 0 (รวมค่า 0 และติดลบ)", "1-10", "10-20",
                 "20-30", "30-40", "40-50", "50-100", "100-200"
             ]
             selected_range = st.select_slider("🔢 เลือกช่วงจำนวนสต็อกคงเหลือ:", options=stock_ranges, value="ทั้งหมด")
@@ -355,9 +355,13 @@ elif menu == "📑 จัดการสินค้า (รายโซน)":
         filtered_df = df_zone.copy()
         numeric_stocks = filtered_df["คงเหลือ"].apply(parse_numeric_stock)
 
-        # แก้ไขเงื่อนไขการกรองช่วง -1000 ถึง 0
-        if selected_range == "-1000 ถึง 0":
-            filtered_df = filtered_df[(numeric_stocks >= -1000) & (numeric_stocks <= 0)]
+        # เงื่อนไขการกรอง: อ่านค่าตั้งแต่ -1000 ไล่ลงมาถึงทุกค่าที่แสดง 0
+        if selected_range == "-1000 ถึง 0 (รวมค่า 0 และติดลบ)":
+            mask = (numeric_stocks >= -1000) & (numeric_stocks <= 0)
+            filtered_df = filtered_df[mask]
+            # จัดเรียงจากติดลบมากที่สุดไล่ลงมาหา 0
+            filtered_df["_sort_stock"] = filtered_df["คงเหลือ"].apply(parse_numeric_stock)
+            filtered_df = filtered_df.sort_values(by="_sort_stock", ascending=True).drop(columns=["_sort_stock"])
         elif selected_range == "1-10":
             filtered_df = filtered_df[(numeric_stocks >= 1) & (numeric_stocks <= 10)]
         elif selected_range == "10-20":
@@ -400,7 +404,12 @@ elif menu == "📑 จัดการสินค้า (รายโซน)":
             else:
                 def highlight_neg(val):
                     try:
-                        return "background-color: #ffebee; color: #c62828; font-weight: bold;" if float(str(val).replace(":", "")) < 0 else ""
+                        num = float(str(val).replace(":", ""))
+                        if num < 0:
+                            return "background-color: #ffebee; color: #c62828; font-weight: bold;"
+                        elif num == 0:
+                            return "background-color: #fffde7; color: #f57f17; font-weight: bold;"
+                        return ""
                     except Exception:
                         return ""
 
@@ -419,7 +428,7 @@ elif menu == "📑 จัดการสินค้า (รายโซน)":
             st.download_button(
                 label=f"📥 ดาวน์โหลดไฟล์ Excel โซน {selected_zone} (.xlsx)",
                 data=output.getvalue(),
-                file_name=f"ข้อมูลสินค้า_โซน_{selected_zone}_{selected_range}.xlsx",
+                file_name=f"ข้อมูลสินค้า_โซน_{selected_zone}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
         else:
