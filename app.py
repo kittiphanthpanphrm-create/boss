@@ -27,7 +27,7 @@ div[data-testid="stFileUploaderDeleteBtn"] {
 
 DB_FILE = "database_inventory.csv"
 
-# รายการโซนทั้งหมด
+# รายการโซนทั้งหมด 30 โซน
 ALL_ZONES = [
     "AA", "AB", "BB", "CC", "DD", "EE", "FF", "GG", "HH",
     "IA", "IB", "IC", "II", "JJ", "KK", "LL", "MA", "MB", 
@@ -36,7 +36,7 @@ ALL_ZONES = [
 ]
 
 # ==========================================
-# 1. ฟังก์ชันจัดการฐานข้อมูลและการประมวลผล
+# 1. ฟังก์ชันจัดการฐานข้อมูลและการประมวลผลแบบมาตรฐาน AA
 # ==========================================
 def load_database():
     if os.path.exists(DB_FILE):
@@ -92,7 +92,6 @@ def extract_fields_from_text(text, source_name, target_zone):
         tag, clean_name = parse_tag_and_clean_name(raw_name)
         if m[4]:
             tag = f"{{{m[4].strip()}}}"
-        extracted_zone = m[9].strip() if m[9] else target_zone
         barcode = str(m[1]).strip()
         data.append({
             "#": m[0],
@@ -102,7 +101,7 @@ def extract_fields_from_text(text, source_name, target_zone):
             "แท็ก {Tag}": tag,
             "หน่วยนับ": m[5].strip(),
             "จำนวนสั่งล่าสุด": str(int(m[8])) if m[8].isdigit() else "0",
-            "โซน": str(extracted_zone).upper().strip(),
+            "โซน": str(target_zone).upper().strip(),
             "คงเหลือ": str(m[6]).strip() if m[6] else "0",
             "สถานะ": m[7] if m[7] else "พร้อมขาย",
             "ชื่อไฟล์ที่มา": source_name
@@ -113,12 +112,8 @@ def clean_and_prepare_df(raw_df, source_name, target_zone):
     df = raw_df.copy()
     df.columns = [f"{c}_{i}" if list(df.columns).count(c) > 1 else c for i, c in enumerate(df.columns)]
     
-    # 1. โซน
-    zone_col = next((c for c in df.columns if "โซน" in str(c)), None)
-    if zone_col:
-        df["โซน"] = df[zone_col].astype(str).str.replace("โซน", "", regex=False).str.replace(":", "", regex=False).str.strip().str.upper()
-    else:
-        df["โซน"] = str(target_zone).upper().strip()
+    # 1. โซน (บังคับตามโซนที่เลือกอัปโหลด)
+    df["โซน"] = str(target_zone).upper().strip()
         
     # 2. รหัสสินค้า
     barcode_col = next((c for c in df.columns if any(k in str(c).lower() for k in ["รหัสสินค้า", "barcode", "บาร์โค้ด"]) or str(c).strip() == "รหัส"), None)
@@ -141,7 +136,7 @@ def clean_and_prepare_df(raw_df, source_name, target_zone):
     elif len(df.columns) > 1:
         df["คงเหลือ"] = df.iloc[:, 1].astype(str).str.replace(":", "", regex=False).str.strip()
 
-    # 5. แท็ก {Tag} และ ชื่อสินค้า
+    # 5. แท็ก {Tag} และ ชื่อสินค้า (สกัดรูปแบบมาตรฐาน AA)
     tag_col = next((c for c in df.columns if "แท็ก" in str(c) or "tag" in str(c).lower()), None)
     name_col = next((c for c in df.columns if any(k in str(c) for k in ["ชื่อ", "รายละ", "ยศ", "รายการ"])), None)
     if name_col is None and len(df.columns) > 4:
@@ -226,17 +221,17 @@ with st.sidebar:
     )
     
     st.divider()
-    st.header("📍 โซนสินค้า")
+    st.header("📍 โซนสินค้า (30 โซน)")
     selected_zone = st.selectbox("เลือกโซนที่ต้องการเข้าดู:", options=ALL_ZONES, index=0)
     
     st.divider()
     st.subheader(f"⚙️ การจัดการข้อมูล [โซน {selected_zone}]")
     
-    # เพิ่มไฟล์ข้อมูลเข้าโซน
+    # เพิ่มไฟล์ข้อมูลเข้าโซน (ประมวลผลฟอร์มแบบ AA ทุกโซน)
     with st.expander(f"📥 เพิ่มไฟล์ข้อมูลเข้าโซน {selected_zone}", expanded=False):
         uploaded_files = st.file_uploader(
             f"เลือกไฟล์สำหรับโซน {selected_zone} (PDF, CSV, XLSX)", 
-            type=["pdf", "csv", "xlsx"], 
+            type=["pdf", "csv", "xlsx", "xls"], 
             accept_multiple_files=True,
             key=f"uploader_{selected_zone}_{st.session_state.uploader_key}"
         )
@@ -255,14 +250,14 @@ with st.sidebar:
                         t_df = clean_and_prepare_df(pd.read_excel(u_file), u_file.name, selected_zone)
                     
                     if not t_df.empty:
-                        t_df["โซน"] = t_df["โซน"].astype(str).replace({"": selected_zone, "-": selected_zone, "NAN": selected_zone}).fillna(selected_zone)
+                        t_df["โซน"] = selected_zone
                         preview_dfs.append(t_df)
                 except Exception as e:
                     st.error(f"ไฟล์ {u_file.name} ผิดพลาด: {e}")
             
             if preview_dfs:
                 combined_new_df = pd.concat(preview_dfs, ignore_index=True)
-                st.info(f"เตรียมพร้อมบันทึก: {len(combined_new_df)} รายการ")
+                st.info(f"เตรียมพร้อมบันทึก: {len(combined_new_df)} รายการ เข้าโซน {selected_zone}")
                 
                 if st.button(f"💾 ยืนยันบันทึกเข้าโซน {selected_zone}", type="primary"):
                     if st.session_state.current_df.empty:
@@ -320,7 +315,7 @@ if menu == "📊 ภาพรวมคลังสินค้า":
         c4.metric("⚠️ สต็อกติดลบ", f"{len(df_all[stock_nums < 0]):,} รายการ")
 
         st.markdown("---")
-        st.subheader("📋 ตารางข้อมูลสินค้าทั้งหมดในระบบ")
+        st.subheader("📋 ตารางข้อมูลสินค้าทั้งหมดในระบบ (30 โซน)")
         display_all_df = df_all.drop(columns=["ชื่อไฟล์ที่มา"], errors="ignore")
         st.dataframe(display_all_df, use_container_width=True)
 
@@ -335,7 +330,7 @@ if menu == "📊 ภาพรวมคลังสินค้า":
         st.info("💡 ยังไม่มีข้อมูลสินค้าในระบบ กรุณาเลือกโซนและอัปโหลดไฟล์ที่แถบเมนูด้านซ้าย")
 
 # ------------------------------------------
-# ฟังก์ชัน 2: จัดการสินค้า (รายโซน)
+# ฟังก์ชัน 2: จัดการสินค้า (รายโซน - แสดงผลมาตรฐาน AA)
 # ------------------------------------------
 elif menu == "📑 จัดการสินค้า (รายโซน)":
     st.title(f"📑 ระบบจัดการสินค้าประจำโซน : {selected_zone}")
@@ -358,7 +353,7 @@ elif menu == "📑 จัดการสินค้า (รายโซน)":
         with col_v:
             display_type = st.radio("รูปแบบการแสดงผล:", ["🖼️ รูปภาพสินค้า (Cards)", "📋 ตารางข้อมูล (Table)"], horizontal=True)
 
-        # กรองข้อมูลตามการเลือกแท็กก่อน
+        # กรองข้อมูลตามแท็ก
         if selected_tag == "📌 รวมทุกแท็ก (จัดกลุ่มตามแท็กอัตโนมัติ)":
             base_df = df_zone.copy()
         else:
@@ -444,7 +439,7 @@ elif menu == "📑 จัดการสินค้า (รายโซน)":
         st.info(f"👈 โซน **{selected_zone}** ยังไม่มีข้อมูล คลิกที่เมนูด้านซ้าย **'📥 เพิ่มไฟล์ข้อมูลเข้าโซน {selected_zone}'** เพื่ออัปโหลด")
 
 # ------------------------------------------
-# ฟังก์ชัน 3: สินค้าที่มีปัญหา (คงเหลือติดลบ)
+# ฟังก์ชัน 3: สินค้าที่มีปัญหา (คงเหลือติดลบ - มาตรฐาน AA)
 # ------------------------------------------
 elif menu == "⚠️ สินค้าที่มีปัญหา (คงเหลือติดลบ)":
     st.title(f"⚠️ สินค้าที่มีปัญหา [คงเหลือติดลบ -] : โซน {selected_zone}")
