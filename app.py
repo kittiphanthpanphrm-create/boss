@@ -4,6 +4,7 @@ import numpy as np
 import re
 import io
 import os
+import altair as alt
 from datetime import datetime
 from pypdf import PdfReader
 
@@ -440,7 +441,7 @@ else:
     df_zone = pd.DataFrame()
 
 # ------------------------------------------
-# ฟังก์ชัน 1: ภาพรวมคลังสินค้า
+# ฟังก์ชัน 1: ภาพรวมคลังสินค้า + แผนภูมิสัดส่วน 30 โซน
 # ------------------------------------------
 if menu == "📊 ภาพรวมคลังสินค้า":
     st.title("📊 ภาพรวมคลังสินค้า (30 โซน)")
@@ -452,6 +453,60 @@ if menu == "📊 ภาพรวมคลังสินค้า":
         c2.metric("✅ สินค้าพร้อมขาย", f"{len(df_all[df_all['สถานะ'].astype(str).str.contains('พร้อมขาย|ปกติ|ขาย', na=False)]):,} รายการ")
         c3.metric("⛔ สินค้าเลิกขาย", f"{len(df_all[df_all['สถานะ'].astype(str).str.contains('เลิกขาย', na=False)]):,} รายการ")
         c4.metric("⚠️ สต็อกติดลบ", f"{len(df_all[stock_nums < 0]):,} รายการ")
+
+        st.markdown("---")
+        
+        # ==========================================
+        # ส่วนแผนภูมิสัดส่วนสินค้าทั้ง 30 โซน
+        # ==========================================
+        st.subheader("📊 แผนภูมิสัดส่วนจำนวนสินค้าในแต่ละโซน (ทั้ง 30 โซน)")
+        
+        # เตรียมตารางข้อมูลสัดส่วนครบ 30 โซน
+        zone_template = pd.DataFrame({"โซน": ALL_ZONES})
+        zone_actual_counts = df_all.groupby("โซน")["รหัสสินค้า"].count().reset_index().rename(columns={"รหัสสินค้า": "จำนวนสินค้า"})
+        zone_summary_30 = pd.merge(zone_template, zone_actual_counts, on="โซน", how="left").fillna(0)
+        zone_summary_30["จำนวนสินค้า"] = zone_summary_30["จำนวนสินค้า"].astype(int)
+        
+        total_items_count = zone_summary_30["จำนวนสินค้า"].sum()
+        if total_items_count > 0:
+            zone_summary_30["สัดส่วน (%)"] = (zone_summary_30["จำนวนสินค้า"] / total_items_count * 100).round(2)
+        else:
+            zone_summary_30["สัดส่วน (%)"] = 0.0
+
+        col_chart1, col_chart2 = st.columns([1.8, 1.2])
+        
+        with col_chart1:
+            st.markdown("##### 📈 จำนวนสินค้าแยกรายโซน (ครบทั้ง 30 โซน)")
+            # แสดง Bar Chart เปรียบเทียบทั้ง 30 โซน
+            bar_chart_data = zone_summary_30.set_index("โซน")[["จำนวนสินค้า"]]
+            st.bar_chart(bar_chart_data, color="#2563EB", use_container_width=True)
+            
+        with col_chart2:
+            st.markdown("##### 🍩 สัดส่วนเปอร์เซ็นต์ของโซนที่มีสินค้า")
+            active_zones = zone_summary_30[zone_summary_30["จำนวนสินค้า"] > 0].copy()
+            
+            if not active_zones.empty:
+                # Donut Chart ด้วย Altair
+                donut_chart = alt.Chart(active_zones).mark_arc(innerRadius=50).encode(
+                    theta=alt.Theta(field="จำนวนสินค้า", type="quantitative"),
+                    color=alt.Color(field="โซน", type="nominal", legend=alt.Legend(title="โซนสินค้า")),
+                    tooltip=["โซน", "จำนวนสินค้า", alt.Tooltip("สัดส่วน (%):Q", format=".2f")]
+                ).properties(height=320)
+                st.altair_chart(donut_chart, use_container_width=True)
+            else:
+                st.info("ยังไม่มีข้อมูลสินค้าในแต่ละโซน")
+
+        # ตารางสรุปสัดส่วน % ของทั้ง 30 โซน
+        with st.expander("📋 ดูตารางสรุปสัดส่วนจำนวนสินค้าและเปอร์เซ็นต์ (ทั้ง 30 โซน)", expanded=False):
+            st.dataframe(
+                zone_summary_30, 
+                column_config={
+                    "จำนวนสินค้า": st.column_config.NumberColumn("จำนวนสินค้า", format="%d รายการ"),
+                    "สัดส่วน (%)": st.column_config.NumberColumn("สัดส่วน (%)", format="%.2f %%")
+                },
+                use_container_width=True, 
+                hide_index=True
+            )
 
         st.markdown("---")
         st.subheader("📋 ตารางข้อมูลสินค้าทั้งหมดในระบบ")
