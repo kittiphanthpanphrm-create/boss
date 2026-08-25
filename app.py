@@ -294,10 +294,15 @@ def clean_and_prepare_df(raw_df, source_name, target_zone):
         df["แท็ก {Tag}"] = "{ทั่วไป}"
         df["ชื่อรายการสินค้า"] = "-"
 
+    # จัดการคอลัมน์สถานะ
+    status_col = next((c for c in df.columns if "สถานะ" in str(c)), None)
+    if status_col:
+        df["สถานะ"] = df[status_col].astype(str).str.strip()
+    else:
+        df["สถานะ"] = "พร้อมขาย"
+
     if "จำนวนสั่งล่าสุด" not in df.columns:
         df["จำนวนสั่งล่าสุด"] = "0"
-    if "สถานะ" not in df.columns:
-        df["สถานะ"] = "พร้อมขาย"
     if "หน่วยนับ" not in df.columns:
         df["หน่วยนับ"] = "-"
         
@@ -448,11 +453,22 @@ if menu == "📊 ภาพรวมคลังสินค้า":
     
     if not df_all.empty:
         stock_nums = df_all["คงเหลือ"].apply(parse_numeric_stock) if "คงเหลือ" in df_all.columns else pd.Series([0]*len(df_all))
+        
+        # แก้ไขเงื่อนไขการนับสถานะเพื่อป้องกันคำว่า "เลิกขาย" ปนกับ "พร้อมขาย"
+        status_series = df_all["สถานะ"].astype(str).str.strip() if "สถานะ" in df_all.columns else pd.Series(["พร้อมขาย"]*len(df_all))
+        is_discontinued = status_series.str.contains("เลิก|ยกเลิก|หยุดขาย", na=False)
+        is_available = ~is_discontinued
+        
+        count_total = len(df_all)
+        count_available = is_available.sum()
+        count_discontinued = is_discontinued.sum()
+        count_negative = (stock_nums < 0).sum()
+
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("📦 รายการสินค้าทั้งหมด", f"{len(df_all):,} รายการ")
-        c2.metric("✅ สินค้าพร้อมขาย", f"{len(df_all[df_all['สถานะ'].astype(str).str.contains('พร้อมขาย|ปกติ|ขาย', na=False)]):,} รายการ")
-        c3.metric("⛔ สินค้าเลิกขาย", f"{len(df_all[df_all['สถานะ'].astype(str).str.contains('เลิกขาย', na=False)]):,} รายการ")
-        c4.metric("⚠️ สต็อกติดลบ", f"{len(df_all[stock_nums < 0]):,} รายการ")
+        c1.metric("📦 รายการสินค้าทั้งหมด", f"{count_total:,} รายการ")
+        c2.metric("✅ สินค้าพร้อมขาย", f"{count_available:,} รายการ")
+        c3.metric("⛔ สินค้าเลิกขาย", f"{count_discontinued:,} รายการ")
+        c4.metric("⚠️ สต็อกติดลบ", f"{count_negative:,} รายการ")
 
         st.markdown("---")
         
@@ -477,7 +493,6 @@ if menu == "📊 ภาพรวมคลังสินค้า":
         
         with col_chart1:
             st.markdown("##### 📈 จำนวนสินค้าแยกรายโซน (ครบทั้ง 30 โซน)")
-            # แสดง Bar Chart เปรียบเทียบทั้ง 30 โซน
             bar_chart_data = zone_summary_30.set_index("โซน")[["จำนวนสินค้า"]]
             st.bar_chart(bar_chart_data, color="#2563EB", use_container_width=True)
             
@@ -486,7 +501,6 @@ if menu == "📊 ภาพรวมคลังสินค้า":
             active_zones = zone_summary_30[zone_summary_30["จำนวนสินค้า"] > 0].copy()
             
             if not active_zones.empty:
-                # Donut Chart ด้วย Altair
                 donut_chart = alt.Chart(active_zones).mark_arc(innerRadius=50).encode(
                     theta=alt.Theta(field="จำนวนสินค้า", type="quantitative"),
                     color=alt.Color(field="โซน", type="nominal", legend=alt.Legend(title="โซนสินค้า")),
@@ -496,7 +510,6 @@ if menu == "📊 ภาพรวมคลังสินค้า":
             else:
                 st.info("ยังไม่มีข้อมูลสินค้าในแต่ละโซน")
 
-        # ตารางสรุปสัดส่วน % ของทั้ง 30 โซน
         with st.expander("📋 ดูตารางสรุปสัดส่วนจำนวนสินค้าและเปอร์เซ็นต์ (ทั้ง 30 โซน)", expanded=False):
             st.dataframe(
                 zone_summary_30, 
