@@ -198,6 +198,7 @@ if not df_zone.empty:
     
     display_tags = unique_tags if selected_tag == "แสดงทุกกลุ่มแท็ก" else [selected_tag]
     
+    # วนลูปแสดงการ์ดสินค้า
     for tag in display_tags:
         group_df = df_zone[df_zone["แท็ก {Tag}"] == tag].reset_index(drop=True)
         
@@ -229,19 +230,30 @@ if not df_zone.empty:
 
     st.divider()
 
-    # ตารางข้อมูลและปุ่มดาวน์โหลด
-    st.subheader(f"📋 ตารางรายการข้อมูล [โซน {selected_zone}]")
-    display_df = df_zone.drop(columns=["ชื่อไฟล์ที่มา"], errors="ignore")
+    # --- ส่วนตารางข้อมูลและปุ่มดาวน์โหลด (ปรับให้กรองตามแท็กที่เลือก) ---
+    if selected_tag == "แสดงทุกกลุ่มแท็ก":
+        table_df = df_zone.copy()
+        table_title = f"📋 ตารางรายการข้อมูลทั้งหมด [โซน {selected_zone}]"
+        file_suffix = f"โซน_{selected_zone}_ทั้งหมด"
+    else:
+        table_df = df_zone[df_zone["แท็ก {Tag}"] == selected_tag].reset_index(drop=True)
+        clean_tag_name = re.sub(r'[\{\}]', '', selected_tag)
+        table_title = f"📋 ตารางรายการข้อมูลแท็ก {selected_tag} [โซน {selected_zone}]"
+        file_suffix = f"โซน_{selected_zone}_แท็ก_{clean_tag_name}"
+
+    st.subheader(table_title)
+    display_df = table_df.drop(columns=["ชื่อไฟล์ที่มา"], errors="ignore")
     st.dataframe(display_df, use_container_width=True)
 
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        display_df.to_excel(writer, sheet_name=f"Zone_{selected_zone}"[:31], index=False)
+        sheet_name = re.sub(r'[\/\\\?\*\[\]\:]', '_', file_suffix)[:31]
+        display_df.to_excel(writer, sheet_name=sheet_name, index=False)
     
     st.download_button(
-        label="📥 ดาวน์โหลดไฟล์ Excel เฉพาะโซนนี้ (.xlsx)",
+        label=f"📥 ดาวน์โหลดไฟล์ Excel ({table_title.replace('📋 ', '')})",
         data=output.getvalue(),
-        file_name=f"ข้อมูล_โซน_{selected_zone}.xlsx",
+        file_name=f"ข้อมูล_{file_suffix}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 else:
