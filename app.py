@@ -9,19 +9,105 @@ from pypdf import PdfReader
 
 # ตั้งค่าหน้าเว็บ
 st.set_page_config(
-    page_title="TKK ERP - ระบบจัดการสินค้าและคลัง",
+    page_title="TKK ERP - ระบบจัดการสต็อกและคลังสินค้า",
     page_icon="📦",
     layout="wide"
 )
 
-# ซ่อนปุ่มกากบาทของตัวอัปโหลดไฟล์ด้วย CSS
+# ปรับแต่งสไตล์ CSS ให้ตัวอักษรใหญ่ หนา และจัดช่องไฟสวยงาม
 st.markdown("""
 <style>
+/* ซ่อนปุ่มกากบาทของ uploader */
 button[aria-label="Delete"] {
     display: none !important;
 }
 div[data-testid="stFileUploaderDeleteBtn"] {
     display: none !important;
+}
+
+/* ตกแต่ง Sidebar */
+[data-testid="stSidebar"] {
+    padding-top: 1.5rem;
+    padding-bottom: 2rem;
+}
+
+.main-sidebar-title {
+    font-size: 1.65rem !important;
+    font-weight: 800 !important;
+    color: #1E293B;
+    margin-bottom: 1.25rem !important;
+    padding-bottom: 0.5rem;
+    border-bottom: 2px solid #E2E8F0;
+    letter-spacing: 0.5px;
+}
+
+.section-label {
+    font-size: 1.15rem !important;
+    font-weight: 700 !important;
+    color: #334155;
+    margin-top: 1rem !important;
+    margin-bottom: 0.6rem !important;
+    letter-spacing: 0.3px;
+}
+
+/* ตกแต่ง Radio Buttons ในแถบเมนูให้ตัวใหญ่ หนา และมีช่องไฟสวยงาม */
+div[data-testid="stRadio"] > label {
+    font-size: 1.1rem !important;
+    font-weight: 700 !important;
+    margin-bottom: 0.5rem !important;
+}
+
+div[data-testid="stRadio"] div[role="radiogroup"] > label {
+    font-size: 1.05rem !important;
+    font-weight: 600 !important;
+    padding: 0.45rem 0.6rem !important;
+    margin-bottom: 0.35rem !important;
+    border-radius: 6px;
+    transition: all 0.2s ease-in-out;
+}
+
+div[data-testid="stRadio"] div[role="radiogroup"] > label:hover {
+    background-color: #F1F5F9;
+}
+
+/* ตกแต่ง Selectbox & Slider */
+div[data-testid="stSelectbox"] label, div[data-testid="stSlider"] label {
+    font-size: 1.05rem !important;
+    font-weight: 700 !important;
+    color: #1E293B !important;
+    margin-bottom: 0.4rem !important;
+}
+
+/* ตกแต่งปุ่มหลัก (Buttons) */
+button[kind="primary"], button[kind="secondary"] {
+    font-size: 1rem !important;
+    font-weight: 700 !important;
+    padding: 0.55rem 1.2rem !important;
+    letter-spacing: 0.3px;
+    border-radius: 8px !important;
+}
+
+/* ปรับระยะห่างหัวข้อหลักในเนื้อหา */
+h1 {
+    font-size: 2rem !important;
+    font-weight: 800 !important;
+    margin-bottom: 1.25rem !important;
+    letter-spacing: 0.5px;
+}
+
+h2, h3 {
+    font-weight: 700 !important;
+    letter-spacing: 0.3px;
+}
+
+div[data-testid="stMetricValue"] {
+    font-size: 1.85rem !important;
+    font-weight: 800 !important;
+}
+
+div[data-testid="stMetricLabel"] {
+    font-size: 1rem !important;
+    font-weight: 700 !important;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -168,31 +254,26 @@ def clean_and_prepare_df(raw_df, source_name, target_zone):
     df = raw_df.copy()
     df.columns = [f"{c}_{i}" if list(df.columns).count(c) > 1 else c for i, c in enumerate(df.columns)]
     
-    # 1. กำหนดโซนให้อิงตามโซนที่เลือกอัปโหลดเสมอ
     df["โซน"] = str(target_zone).upper().strip()
         
-    # 2. รหัสสินค้า
     barcode_col = next((c for c in df.columns if any(k in str(c).lower() for k in ["รหัสสินค้า", "barcode", "บาร์โค้ด"]) or str(c).strip() == "รหัส"), None)
     if barcode_col:
         df["รหัสสินค้า"] = df[barcode_col].astype(str).str.replace(":", "", regex=False).str.replace(r'\.0$', '', regex=True).str.strip()
     elif len(df.columns) > 2:
         df["รหัสสินค้า"] = df.iloc[:, 2].astype(str).str.replace(":", "", regex=False).str.replace(r'\.0$', '', regex=True).str.strip()
 
-    # 3. รหัสรอง
     sub_col = next((c for c in df.columns if any(k in str(c).lower() for k in ["รหัสรอง", "item_code"])), None)
     if sub_col:
         df["รหัสรอง"] = df[sub_col].astype(str).str.replace(":", "", regex=False).str.replace(r'\.0$', '', regex=True).str.strip()
     elif len(df.columns) > 3:
         df["รหัสรอง"] = df.iloc[:, 3].astype(str).str.replace(":", "", regex=False).str.replace(r'\.0$', '', regex=True).str.strip()
 
-    # 4. ยอดคงเหลือ
     stock_col = next((c for c in df.columns if "คงเหลือ" in str(c)), None)
     if stock_col:
         df["คงเหลือ"] = df[stock_col].astype(str).str.replace(":", "", regex=False).str.strip()
     elif len(df.columns) > 1:
         df["คงเหลือ"] = df.iloc[:, 1].astype(str).str.replace(":", "", regex=False).str.strip()
 
-    # 5. แท็ก {Tag} และ ชื่อสินค้า
     tag_col = next((c for c in df.columns if "แท็ก" in str(c) or "tag" in str(c).lower()), None)
     name_col = next((c for c in df.columns if any(k in str(c) for k in ["ชื่อ", "รายละ", "ยศ", "รายการ"])), None)
     if name_col is None and len(df.columns) > 4:
@@ -243,14 +324,14 @@ def render_product_cards(items_df, current_zone, is_problem=False):
                     caption=f"รหัส: {barcode}", 
                     use_container_width=True
                 )
-                st.markdown(f"**{name}**")
-                st.caption(f"รหัสสินค้า: `{barcode}` | โซน: `{current_zone}`")
+                st.markdown(f"### **{name}**")
+                st.caption(f"**รหัสสินค้า:** `{barcode}` | **โซน:** `{current_zone}`")
                 st.markdown(f"📋 **รหัสรอง (คลิกเพื่อ Copy):**")
                 st.code(sub_code, language="text")
                 if is_problem or parse_numeric_stock(stock) < 0:
-                    st.markdown(f"🚨 **คงเหลือ:** :red[{stock}] | 🛒 **สั่งล่าสุด:** {qty}")
+                    st.markdown(f"🚨 **คงเหลือ:** :red[{stock}] | 🛒 **สั่งล่าสุด:** **{qty}**")
                 else:
-                    st.markdown(f"📦 **คงเหลือ:** {stock} | 🛒 **สั่งล่าสุด:** {qty}")
+                    st.markdown(f"📦 **คงเหลือ:** **{stock}** | 🛒 **สั่งล่าสุด:** **{qty}**")
                 st.link_button("🌐 เปิดดูบนเว็บ TKK Online", web_link, use_container_width=True)
 
 # โหลดฐานข้อมูล
@@ -260,12 +341,14 @@ if "uploader_key" not in st.session_state:
     st.session_state.uploader_key = 0
 
 # ==========================================
-# 2. แถบเมนูด้านซ้าย (Sidebar)
+# 2. แถบเมนูด้านซ้าย (Sidebar) - "จัดการสต็อก"
 # ==========================================
 with st.sidebar:
-    st.title("📦 TKK ERP Control")
+    st.markdown('<div class="main-sidebar-title">📦 จัดการสต็อก</div>', unsafe_allow_html=True)
+    
+    st.markdown('<div class="section-label">🎯 ฟังก์ชันการทำงาน</div>', unsafe_allow_html=True)
     menu = st.radio(
-        "🎯 เลือกฟังก์ชันการทำงาน",
+        "",
         [
             "📊 ภาพรวมคลังสินค้า", 
             "📑 จัดการสินค้า (รายโซน)", 
@@ -276,11 +359,11 @@ with st.sidebar:
     )
     
     st.divider()
-    st.header("📍 โซนสินค้า (30 โซน)")
+    st.markdown('<div class="section-label">📍 โซนสินค้า (30 โซน)</div>', unsafe_allow_html=True)
     selected_zone = st.selectbox("เลือกโซนที่ต้องการเข้าดู:", options=ALL_ZONES, index=0)
     
     st.divider()
-    st.subheader(f"⚙️ การจัดการข้อมูล [โซน {selected_zone}]")
+    st.markdown(f'<div class="section-label">⚙️ จัดการข้อมูล [โซน {selected_zone}]</div>', unsafe_allow_html=True)
     
     # เพิ่มไฟล์ข้อมูลเข้าโซน
     with st.expander(f"📥 เพิ่มไฟล์ข้อมูลเข้าโซน {selected_zone}", expanded=False):
@@ -307,14 +390,13 @@ with st.sidebar:
                     if not t_df.empty:
                         t_df["โซน"] = str(selected_zone).upper().strip()
                         preview_dfs.append(t_df)
-                        # บันทึก Snapshot สินค้าลงประวัติการเปลี่ยนแปลง
                         record_inventory_snapshot(t_df, u_file.name, selected_zone)
                 except Exception as e:
                     st.error(f"ไฟล์ {u_file.name} ผิดพลาด: {e}")
             
             if preview_dfs:
                 combined_new_df = pd.concat(preview_dfs, ignore_index=True)
-                st.info(f"เตรียมพร้อมบันทึก: {len(combined_new_df)} รายการ เข้าโซน {selected_zone}")
+                st.info(f"**เตรียมพร้อมบันทึก:** {len(combined_new_df)} รายการ เข้าโซน {selected_zone}")
                 
                 if st.button(f"💾 ยืนยันบันทึกเข้าโซน {selected_zone}", type="primary"):
                     if st.session_state.current_df.empty:
@@ -361,7 +443,7 @@ else:
 # ฟังก์ชัน 1: ภาพรวมคลังสินค้า
 # ------------------------------------------
 if menu == "📊 ภาพรวมคลังสินค้า":
-    st.title("📊 ภาพรวมคลังสินค้า TKK ERP")
+    st.title("📊 ภาพรวมคลังสินค้า (30 โซน)")
     
     if not df_all.empty:
         stock_nums = df_all["คงเหลือ"].apply(parse_numeric_stock) if "คงเหลือ" in df_all.columns else pd.Series([0]*len(df_all))
@@ -372,7 +454,7 @@ if menu == "📊 ภาพรวมคลังสินค้า":
         c4.metric("⚠️ สต็อกติดลบ", f"{len(df_all[stock_nums < 0]):,} รายการ")
 
         st.markdown("---")
-        st.subheader("📋 ตารางข้อมูลสินค้าทั้งหมดในระบบ (30 โซน)")
+        st.subheader("📋 ตารางข้อมูลสินค้าทั้งหมดในระบบ")
         display_all_df = df_all.drop(columns=["ชื่อไฟล์ที่มา"], errors="ignore")
         st.dataframe(display_all_df, use_container_width=True)
 
@@ -454,7 +536,7 @@ elif menu == "📑 จัดการสินค้า (รายโซน)":
                     present_tags = sorted(list(filtered_df["แท็ก {Tag}"].dropna().unique()))
                     for tag in present_tags:
                         group_df = filtered_df[filtered_df["แท็ก {Tag}"] == tag].reset_index(drop=True)
-                        with st.expander(f"📦 แท็ก: **{tag}** (พบ {len(group_df)} รายการ)", expanded=True):
+                        with st.expander(f"📦 แท็ก: **{tag}** (พบ **{len(group_df)}** รายการ)", expanded=True):
                             render_product_cards(group_df, selected_zone)
                 else:
                     render_product_cards(filtered_df, selected_zone)
@@ -516,7 +598,7 @@ elif menu == "⚠️ สินค้าที่มีปัญหา (คงเ
             if selected_prob_tag == "📌 รวมทุกแท็ก (จัดกลุ่มตามแท็กอัตโนมัติ)":
                 for tag in prob_tags:
                     group_prob_df = problem_df[problem_df["แท็ก {Tag}"] == tag].reset_index(drop=True)
-                    with st.expander(f"🚨 แท็ก: **{tag}** (รวม {len(group_prob_df)} รายการ)", expanded=True):
+                    with st.expander(f"🚨 แท็ก: **{tag}** (รวม **{len(group_prob_df)}** รายการ)", expanded=True):
                         render_product_cards(group_prob_df, selected_zone, is_problem=True)
             else:
                 filtered_prob_df = problem_df[problem_df["แท็ก {Tag}"] == selected_prob_tag].reset_index(drop=True)
@@ -552,7 +634,6 @@ elif menu == "📈 สรุปรายงานรายเดือน (ว�
     df_snaps = load_snapshots()
     
     if not df_snaps.empty:
-        # เลือกเดือนที่ต้องการวิเคราะห์
         months_available = sorted(list(df_snaps["month_year"].dropna().unique()), reverse=True)
         
         c_m, c_z = st.columns([1.5, 1.5])
@@ -562,13 +643,11 @@ elif menu == "📈 สรุปรายงานรายเดือน (ว�
             zone_filter_options = ["📌 รวมทุกโซน (30 โซน)"] + ALL_ZONES
             selected_rep_zone = st.selectbox("📍 เลือกโซนที่ต้องการดูการเปลี่ยนแปลง:", options=zone_filter_options)
             
-        # กรองข้อมูลของเดือนที่เลือก
         cur_month_df = df_snaps[df_snaps["month_year"] == selected_month].copy()
         if selected_rep_zone != "📌 รวมทุกโซน (30 โซน)":
             cur_month_df = cur_month_df[cur_month_df["zone"] == selected_rep_zone]
 
         if not cur_month_df.empty:
-            # คำนวณการเปลี่ยนแปลงของสินค้าแต่ละตัว (เปรียบเทียบค่าแรกกับค่าล่าสุดที่นำเข้าในเดือน)
             grouped_items = []
             for (z_val, bc_val), g in cur_month_df.groupby(["zone", "barcode"]):
                 g_sorted = g.sort_values(by="timestamp")
@@ -605,7 +684,6 @@ elif menu == "📈 สรุปรายงานรายเดือน (ว�
                 
             items_change_df = pd.DataFrame(grouped_items)
             
-            # Metrics แสดงภาพรวมการเปลี่ยนแปลง
             m_total_items = len(items_change_df)
             m_stock_inc = len(items_change_df[items_change_df["ผลต่างการเปลี่ยนแปลง"] > 0])
             m_stock_dec = len(items_change_df[items_change_df["ผลต่างการเปลี่ยนแปลง"] < 0])
@@ -651,7 +729,6 @@ elif menu == "📈 สรุปรายงานรายเดือน (ว�
             with tab_detail:
                 st.subheader(f"📋 รายการสินค้าที่มีการเคลื่อนไหวสต็อก (เดือน {selected_month})")
                 
-                # ฟิลเตอร์ตามสถานะ
                 filter_status = st.selectbox(
                     "กรองดูเฉพาะกลุ่ม:", 
                     ["ทั้งหมด", "🟢 เฉพาะสินค้าสต็อกเพิ่มขึ้น", "🔴 เฉพาะสินค้าสต็อกลดลง", "🚨 เฉพาะสินค้าที่สต็อกติดลบ"]
