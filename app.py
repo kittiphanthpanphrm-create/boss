@@ -344,7 +344,7 @@ elif menu == "📑 จัดการสินค้า (รายโซน)":
         col_s, col_v = st.columns([2, 1])
         with col_s:
             stock_ranges = [
-                "ทั้งหมด", "0 ถึง -1000", "1-10", "10-20",
+                "ทั้งหมด", "-1000 ถึง 0", "1-10", "10-20",
                 "20-30", "30-40", "40-50", "50-100", "100-200"
             ]
             selected_range = st.select_slider("🔢 เลือกช่วงจำนวนสต็อกคงเหลือ:", options=stock_ranges, value="ทั้งหมด")
@@ -355,8 +355,9 @@ elif menu == "📑 จัดการสินค้า (รายโซน)":
         filtered_df = df_zone.copy()
         numeric_stocks = filtered_df["คงเหลือ"].apply(parse_numeric_stock)
 
-        if selected_range == "0 ถึง -1000":
-            filtered_df = filtered_df[(numeric_stocks <= 0) & (numeric_stocks >= -1000)]
+        # แก้ไขเงื่อนไขการกรองช่วง -1000 ถึง 0
+        if selected_range == "-1000 ถึง 0":
+            filtered_df = filtered_df[(numeric_stocks >= -1000) & (numeric_stocks <= 0)]
         elif selected_range == "1-10":
             filtered_df = filtered_df[(numeric_stocks >= 1) & (numeric_stocks <= 10)]
         elif selected_range == "10-20":
