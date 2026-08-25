@@ -341,7 +341,13 @@ elif menu == "📑 จัดการสินค้า (รายโซน)":
     st.title(f"📑 ระบบจัดการสินค้าประจำโซน : {selected_zone}")
 
     if not df_zone.empty:
-        col_s, col_v = st.columns([2, 1])
+        col_t, col_s, col_v = st.columns([1.5, 2, 1.2])
+        
+        with col_t:
+            tag_list = sorted(list(df_zone["แท็ก {Tag}"].dropna().unique())) if "แท็ก {Tag}" in df_zone.columns else []
+            tag_options = ["📌 รวมทุกแท็ก (จัดกลุ่มตามแท็กอัตโนมัติ)"] + tag_list
+            selected_tag = st.selectbox("🏷️ เลือกแท็กสินค้า:", options=tag_options)
+
         with col_s:
             stock_ranges = [
                 "ทั้งหมด", "-1000 ถึง 0", "1-10", "10-20",
@@ -352,55 +358,57 @@ elif menu == "📑 จัดการสินค้า (รายโซน)":
         with col_v:
             display_type = st.radio("รูปแบบการแสดงผล:", ["🖼️ รูปภาพสินค้า (Cards)", "📋 ตารางข้อมูล (Table)"], horizontal=True)
 
-        filtered_df = df_zone.copy()
-        numeric_stocks = filtered_df["คงเหลือ"].apply(parse_numeric_stock)
+        # กรองข้อมูลตามการเลือกแท็กก่อน (เลือกแท็กเฉพาะ หรือ รวมทุกแท็ก)
+        if selected_tag == "📌 รวมทุกแท็ก (จัดกลุ่มตามแท็กอัตโนมัติ)":
+            base_df = df_zone.copy()
+        else:
+            base_df = df_zone[df_zone["แท็ก {Tag}"] == selected_tag].copy()
 
-        # เงื่อนไขการกรอง: อ่านค่าตั้งแต่ -1000 ไล่ลงมาถึงทุกค่าที่แสดง 0 พร้อมเรียงลำดับติดลบมากที่สุดขึ้นก่อน
+        # กรองตามช่วงสต็อก
+        numeric_stocks = base_df["คงเหลือ"].apply(parse_numeric_stock)
+
         if selected_range == "-1000 ถึง 0":
             mask = (numeric_stocks >= -1000) & (numeric_stocks <= 0)
-            filtered_df = filtered_df[mask].copy()
+            filtered_df = base_df[mask].copy()
             filtered_df["_sort_num"] = filtered_df["คงเหลือ"].apply(parse_numeric_stock)
-            # เรียงจากติดลบมากที่สุดขึ้นก่อน (เช่น -96, -72, -5, 0)
+            # เรียงจากติดลบมากที่สุด (-1000) ไล่ลงมาหา 0
             filtered_df = filtered_df.sort_values(by="_sort_num", ascending=True).drop(columns=["_sort_num"])
         elif selected_range == "1-10":
-            filtered_df = filtered_df[(numeric_stocks >= 1) & (numeric_stocks <= 10)]
+            filtered_df = base_df[(numeric_stocks >= 1) & (numeric_stocks <= 10)]
         elif selected_range == "10-20":
-            filtered_df = filtered_df[(numeric_stocks > 10) & (numeric_stocks <= 20)]
+            filtered_df = base_df[(numeric_stocks > 10) & (numeric_stocks <= 20)]
         elif selected_range == "20-30":
-            filtered_df = filtered_df[(numeric_stocks > 20) & (numeric_stocks <= 30)]
+            filtered_df = base_df[(numeric_stocks > 20) & (numeric_stocks <= 30)]
         elif selected_range == "30-40":
-            filtered_df = filtered_df[(numeric_stocks > 30) & (numeric_stocks <= 40)]
+            filtered_df = base_df[(numeric_stocks > 30) & (numeric_stocks <= 40)]
         elif selected_range == "40-50":
-            filtered_df = filtered_df[(numeric_stocks > 40) & (numeric_stocks <= 50)]
+            filtered_df = base_df[(numeric_stocks > 40) & (numeric_stocks <= 50)]
         elif selected_range == "50-100":
-            filtered_df = filtered_df[(numeric_stocks > 50) & (numeric_stocks <= 100)]
+            filtered_df = base_df[(numeric_stocks > 50) & (numeric_stocks <= 100)]
         elif selected_range == "100-200":
-            filtered_df = filtered_df[(numeric_stocks > 100) & (numeric_stocks <= 200)]
+            filtered_df = base_df[(numeric_stocks > 100) & (numeric_stocks <= 200)]
+        else:
+            filtered_df = base_df.copy()
 
         filtered_df = filtered_df.reset_index(drop=True)
 
         st.markdown("---")
-        m1, m2, m3 = st.columns(3)
+        m1, m2, m3, m4 = st.columns(4)
         m1.metric("📍 โซนที่เลือก", f"โซน {selected_zone}")
-        m2.metric("🎯 เงื่อนไขสต็อก", selected_range)
-        m3.metric("📦 พบสินค้า", f"{len(filtered_df):,} รายการ")
+        m2.metric("🏷️ แท็กที่เลือก", "รวมทุกแท็ก" if selected_tag == "📌 รวมทุกแท็ก (จัดกลุ่มตามแท็กอัตโนมัติ)" else selected_tag)
+        m3.metric("🎯 เงื่อนไขสต็อก", selected_range)
+        m4.metric("📦 พบสินค้า", f"{len(filtered_df):,} รายการ")
 
         if not filtered_df.empty:
             if display_type == "🖼️ รูปภาพสินค้า (Cards)":
-                if "แท็ก {Tag}" in filtered_df.columns:
-                    tag_list = sorted(list(filtered_df["แท็ก {Tag}"].dropna().unique()))
-                    tag_options = ["📌 รวมทุกแท็ก (จัดกลุ่มตามแท็กอัตโนมัติ)"] + tag_list
-                    selected_tag = st.selectbox("🏷️ เลือกกลุ่มแท็กสินค้า:", options=tag_options)
-                    
-                    if selected_tag == "📌 รวมทุกแท็ก (จัดกลุ่มตามแท็กอัตโนมัติ)":
-                        for tag in tag_list:
-                            group_df = filtered_df[filtered_df["แท็ก {Tag}"] == tag].reset_index(drop=True)
-                            with st.expander(f"📦 แท็ก: **{tag}** (รวม {len(group_df)} รายการ)", expanded=True):
-                                render_product_cards(group_df, selected_zone)
-                    else:
-                        g_df = filtered_df[filtered_df["แท็ก {Tag}"] == selected_tag].reset_index(drop=True)
-                        st.write(f"พบ **{len(g_df)} รายการ** ในแท็ก `{selected_tag}`")
-                        render_product_cards(g_df, selected_zone)
+                if selected_tag == "📌 รวมทุกแท็ก (จัดกลุ่มตามแท็กอัตโนมัติ)":
+                    present_tags = sorted(list(filtered_df["แท็ก {Tag}"].dropna().unique()))
+                    for tag in present_tags:
+                        group_df = filtered_df[filtered_df["แท็ก {Tag}"] == tag].reset_index(drop=True)
+                        with st.expander(f"📦 แท็ก: **{tag}** (พบ {len(group_df)} รายการ)", expanded=True):
+                            render_product_cards(group_df, selected_zone)
+                else:
+                    render_product_cards(filtered_df, selected_zone)
             else:
                 def highlight_neg(val):
                     try:
@@ -427,12 +435,12 @@ elif menu == "📑 จัดการสินค้า (รายโซน)":
             
             st.download_button(
                 label=f"📥 ดาวน์โหลดไฟล์ Excel โซน {selected_zone} (.xlsx)",
-                data=output.getvalue(),
+                data=output.getvalue>,
                 file_name=f"ข้อมูลสินค้า_โซน_{selected_zone}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
         else:
-            st.warning(f"ℹ️ ไม่พบรายการสินค้าในโซน {selected_zone} ที่ตรงกับเงื่อนไขสต็อก '{selected_range}'")
+            st.warning(f"ℹ️ ไม่พบรายการสินค้าในโซน {selected_zone} สำหรับแท็ก '{selected_tag}' ที่ตรงกับเงื่อนไขสต็อก '{selected_range}'")
     else:
         st.info(f"👈 โซน **{selected_zone}** ยังไม่มีข้อมูล คลิกที่เมนูด้านซ้าย **'📥 เพิ่มไฟล์ข้อมูลเข้าโซน {selected_zone}'** เพื่ออัปโหลด")
 
