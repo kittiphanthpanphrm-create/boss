@@ -2,22 +2,103 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-# ตั้งค่าหน้าเว็บ
-st.set_page_config(page_title="ระบบจัดการคลังสินค้า", layout="wide")
+# ==========================================
+# ส่วนที่ 1: โหลด ทำความสะอาดข้อมูล และเซฟ CSV (คำสั่งเดิม)
+# ==========================================
+file_path = "TKKERP (5).xlsx"
 
 
 @st.cache_data
-def load_data(file_path="TKKERP (5).xlsx"):
+def process_and_load_data(file_path):
     try:
+        # 1. โหลดข้อมูลจากไฟล์ Excel
         df = pd.read_excel(file_path, sheet_name="Sheet1")
-    except Exception:
-        # กรณีไม่มีไฟล์ต้นทาง ให้สร้าง Mock Data จำลองสำหรับทดสอบระบบ
+
+        # 2. ทำความสะอาดข้อมูลและตั้งชื่อคอลัมน์
+        df_clean = df.iloc[1:].copy()
+        df_clean.columns = [
+            "โซน",
+            "จำนวนคงเหลือ",
+            "ยด",
+            "barcode",
+            "item_code",
+            "col5",
+            "ชื่อสินค้า_สถานะ",
+        ]
+
+        # แปลงประเภทข้อมูลตัวเลข
+        df_clean["จำนวนคงเหลือ"] = pd.to_numeric(
+            df_clean["จำนวนคงเหลือ"], errors="coerce"
+        ).fillna(0)
+
+        # แปลงรหัส Barcode และ Item Code ให้อยู่ในรูปแบบ String ตัวเลขล้วน
+        def clean_code(val):
+            if pd.isna(val):
+                return ""
+            return str(val).split(".")[0].strip()
+
+        df_clean["barcode"] = df_clean["barcode"].apply(clean_code)
+        df_clean["item_code"] = df_clean["item_code"].apply(clean_code)
+
+        # แยกชื่อสินค้าและสถานะ ออกจากกัน
+        def parse_name_status(val):
+            if pd.isna(val):
+                return "", ""
+            val_str = str(val).strip()
+            if ":" in val_str:
+                parts = val_str.rsplit(":", 1)
+                return parts[0].strip(), parts[1].strip()
+            return val_str, ""
+
+        df_clean[["ชื่อสินค้า", "สถานะ"]] = df_clean[
+            "ชื่อสินค้า_สถานะ"
+        ].apply(lambda x: pd.Series(parse_name_status(x)))
+
+        # ตัดคำว่า 'โซน : ' ให้เหลือเฉพาะชื่อโซน
+        df_clean["โซน"] = (
+            df_clean["โซน"].str.replace("โซน : ", "").str.strip()
+        )
+
+        # 3. เลือกเฉพาะคอลัมน์ที่ต้องการใช้งาน
+        export_cols = [
+            "โซน",
+            "จำนวนคงเหลือ",
+            "barcode",
+            "item_code",
+            "ชื่อสินค้า",
+            "สถานะ",
+        ]
+        final_df = df_clean[export_cols].reset_index(drop=True)
+
+        # 4. ส่งออกไฟล์เป็น CSV รองรับภาษาไทย (UTF-8 with BOM) ตามคำสั่งเดิม
+        final_df.to_csv(
+            "TKKERP_Cleaned_All.csv", index=False, encoding="utf-8-sig"
+        )
+        return final_df
+
+    except Exception as e:
+        # จำลองข้อมูล Mock กรณีหาไฟล์ไม่พบ
         zones_list = [
-            f"โซน {chr(65+i)}{chr(65+j)}"
-            for i in range(3)
-            for j in range(6)
-        ][:18]
-        return pd.DataFrame(
+            "AA",
+            "BB",
+            "CC",
+            "DD",
+            "EE",
+            "FF",
+            "GG",
+            "HH",
+            "II",
+            "JJ",
+            "KK",
+            "LL",
+            "MM",
+            "NN",
+            "OO",
+            "PP",
+            "QQ",
+            "IC",
+        ]
+        mock_df = pd.DataFrame(
             {
                 "โซน": np.random.choice(zones_list, 500),
                 "จำนวนคงเหลือ": np.random.randint(-100, 200, 500),
@@ -33,59 +114,21 @@ def load_data(file_path="TKKERP (5).xlsx"):
                 ),
             }
         )
-
-    # คลีนข้อมูลจริงจากไฟล์ Excel
-    df_clean = df.iloc[1:].copy()
-    df_clean.columns = [
-        "โซน",
-        "จำนวนคงเหลือ",
-        "ยด",
-        "barcode",
-        "item_code",
-        "col5",
-        "ชื่อสินค้า_สถานะ",
-    ]
-    df_clean["จำนวนคงเหลือ"] = pd.to_numeric(
-        df_clean["จำนวนคงเหลือ"], errors="coerce"
-    ).fillna(0)
-
-    def clean_code(val):
-        if pd.isna(val):
-            return ""
-        return str(val).split(".")[0].strip()
-
-    df_clean["barcode"] = df_clean["barcode"].apply(clean_code)
-    df_clean["item_code"] = df_clean["item_code"].apply(clean_code)
-
-    def parse_name_status(val):
-        if pd.isna(val):
-            return "", ""
-        val_str = str(val).strip()
-        if ":" in val_str:
-            parts = val_str.rsplit(":", 1)
-            return parts[0].strip(), parts[1].strip()
-        return val_str, ""
-
-    df_clean[["ชื่อสินค้า", "สถานะ"]] = df_clean["ชื่อสินค้า_สถานะ"].apply(
-        lambda x: pd.Series(parse_name_status(x))
-    )
-    df_clean["โซน"] = df_clean["โซน"].str.replace("โซน : ", "").str.strip()
-
-    export_cols = [
-        "โซน",
-        "จำนวนคงเหลือ",
-        "barcode",
-        "item_code",
-        "ชื่อสินค้า",
-        "สถานะ",
-    ]
-    return df_clean[export_cols].reset_index(drop=True)
+        mock_df.to_csv(
+            "TKKERP_Cleaned_All.csv", index=False, encoding="utf-8-sig"
+        )
+        return mock_df
 
 
-# โหลดข้อมูล
-df_inventory = load_data()
+# ดึงข้อมูลเข้าสู่ตัวแปร
+df_inventory = process_and_load_data(file_path)
 
-# รายชื่อ 18 โซน (สามารถปรับเปลี่ยนชื่อให้ตรงกับหน้างานจริงได้)
+# ==========================================
+# ส่วนที่ 2: ระบบจัดการสินค้า 18 โซน + กรองสต็อก (คำสั่งที่เพิ่มใหม่)
+# ==========================================
+st.set_page_config(page_title="ระบบจัดการคลังสินค้า", layout="wide")
+
+# รายชื่อ 18 โซนหลัก
 ALL_18_ZONES = [
     "AA",
     "BB",
@@ -107,13 +150,13 @@ ALL_18_ZONES = [
     "IC",
 ]
 
-# เมนูหลักด้านข้าง (Sidebar)
+# แถบเมนูด้านข้าง
 st.sidebar.title("📦 เมนูระบบ")
 menu = st.sidebar.radio(
-    "เลือกฟังก์ชันการทำงาน", ["หน้าหลัก", "จัดการสินค้า (18 โซน)"]
+    "เลือกหน้าการทำงาน", ["หน้าหลัก (ภาพรวม)", "จัดการสินค้า (18 โซน)"]
 )
 
-if menu == "หน้าหลัก":
+if menu == "หน้าหลัก (ภาพรวม)":
     st.title("📊 ภาพรวมคลังสินค้า")
     col1, col2, col3 = st.columns(3)
     col1.metric("จำนวนรายการทั้งหมด", f"{len(df_inventory):,} รายการ")
@@ -125,22 +168,28 @@ if menu == "หน้าหลัก":
         "สินค้าสต็อกติดลบ",
         f"{len(df_inventory[df_inventory['จำนวนคงเหลือ'] < 0]):,} รายการ",
     )
-    st.info("👈 กรุณาคลิกเลือกเมนู **'จัดการสินค้า (18 โซน)'** ที่แถบเมนูด้านซ้ายเพื่อเริ่มจัดการ")
+
+    st.markdown("---")
+    st.subheader("📋 ตัวอย่างข้อมูลที่คลีนแล้ว")
+    st.dataframe(df_inventory.head(15), use_container_width=True)
+    st.success(
+        "บันทึกไฟล์ 'TKKERP_Cleaned_All.csv' เรียบร้อยแล้วที่โฟลเดอร์ปัจจุบัน"
+    )
 
 elif menu == "จัดการสินค้า (18 โซน)":
     st.title("📑 ระบบจัดการสินค้าแยกรายโซน (18 โซน)")
 
-    # 1. ส่วนเลือกโซน
+    # ฟังก์ชันย่อยที่ 1: เลือก 18 โซน
     selected_zone = st.selectbox(
-        "📍 เลือกโซนที่ต้องการตรวจสอบ (18 โซน):",
+        "📍 เลือกโซนที่ต้องการดูข้อมูล:",
         options=ALL_18_ZONES,
         index=0,
     )
 
-    # 2. ส่วนเลือกช่วงสต็อก
+    # ฟังก์ชันย่อยที่ 2: เลือกช่วงสต็อกตามเงื่อนไข
     stock_ranges = [
         "ทั้งหมด",
-        "0 ถึง -1000 (สต็อกติดลบ/หมด)",
+        "0 ถึง -1000",
         "1 - 10",
         "10 - 20",
         "20 - 30",
@@ -148,20 +197,18 @@ elif menu == "จัดการสินค้า (18 โซน)":
         "40 - 50",
         "50 - 100",
         "100 - 200",
-        "มากกว่า 200",
     ]
 
     selected_range = st.radio(
-        "🔢 เลือกระดับจำนวนสต็อกคงเหลือ:",
+        "🔢 กรองตามช่วงจำนวนสต็อกคงเหลือ:",
         options=stock_ranges,
         horizontal=True,
     )
 
-    # กรองข้อมูลตามโซน
+    # ประมวลผลการกรองข้อมูล
     filtered_df = df_inventory[df_inventory["โซน"] == selected_zone].copy()
 
-    # กรองข้อมูลตามช่วงสต็อก
-    if selected_range == "0 ถึง -1000 (สต็อกติดลบ/หมด)":
+    if selected_range == "0 ถึง -1000":
         filtered_df = filtered_df[
             (filtered_df["จำนวนคงเหลือ"] <= 0)
             & (filtered_df["จำนวนคงเหลือ"] >= -1000)
@@ -201,26 +248,27 @@ elif menu == "จัดการสินค้า (18 โซน)":
             (filtered_df["จำนวนคงเหลือ"] > 100)
             & (filtered_df["จำนวนคงเหลือ"] <= 200)
         ]
-    elif selected_range == "มากกว่า 200":
-        filtered_df = filtered_df[filtered_df["จำนวนคงเหลือ"] > 200]
 
     st.markdown("---")
 
-    # สรุปผลการค้นหา
-    col_stat1, col_stat2, col_stat3 = st.columns(3)
-    col_stat1.metric("โซนปัจจุบัน", f"โซน {selected_zone}")
-    col_stat2.metric("เงื่อนไขสต็อก", selected_range)
-    col_stat3.metric("พบข้อมูล", f"{len(filtered_df):,} รายการ")
+    # แสดงสถิติสรุป
+    c1, c2, c3 = st.columns(3)
+    c1.metric("โซนที่เลือก", f"โซน {selected_zone}")
+    c2.metric("เงื่อนไขช่วงสต็อก", selected_range)
+    c3.metric("จำนวนรายการที่พบ", f"{len(filtered_df):,} รายการ")
 
-    # ตารางแสดงรายการสินค้า
+    # แสดงผลตารางสินค้า
     if not filtered_df.empty:
-        # ฟังก์ชันจัดสีแจ้งเตือนสต็อกติดลบ
-        def highlight_negative(val):
-            color = "#ffcccc" if isinstance(val, (int, float)) and val < 0 else ""
-            return f"background-color: {color}"
+
+        def highlight_neg(val):
+            return (
+                "background-color: #ffcccc"
+                if isinstance(val, (int, float)) and val < 0
+                else ""
+            )
 
         styled_df = filtered_df.style.map(
-            highlight_negative, subset=["จำนวนคงเหลือ"]
+            highlight_neg, subset=["จำนวนคงเหลือ"]
         )
 
         st.dataframe(
@@ -236,12 +284,11 @@ elif menu == "จัดการสินค้า (18 โซน)":
             hide_index=True,
         )
 
-        # ปุ่มดาวน์โหลดรายงานเฉพาะรายการที่กรอง
-        csv_data = filtered_df.to_csv(index=False, encoding="utf-8-sig")
+        csv_download = filtered_df.to_csv(index=False, encoding="utf-8-sig")
         st.download_button(
             label="📥 ดาวน์โหลดรายการที่เลือกเป็น CSV",
-            data=csv_data,
-            file_name=f"stock_zone_{selected_zone}_{selected_range}.csv",
+            data=csv_download,
+            file_name=f"zone_{selected_zone}_{selected_range}.csv",
             mime="text/csv",
         )
     else:
