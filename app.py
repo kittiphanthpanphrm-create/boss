@@ -358,7 +358,7 @@ elif menu == "📑 จัดการสินค้า (รายโซน)":
         with col_v:
             display_type = st.radio("รูปแบบการแสดงผล:", ["🖼️ รูปภาพสินค้า (Cards)", "📋 ตารางข้อมูล (Table)"], horizontal=True)
 
-        # กรองข้อมูลตามการเลือกแท็กก่อน (เลือกแท็กเฉพาะ หรือ รวมทุกแท็ก)
+        # กรองข้อมูลตามการเลือกแท็กก่อน
         if selected_tag == "📌 รวมทุกแท็ก (จัดกลุ่มตามแท็กอัตโนมัติ)":
             base_df = df_zone.copy()
         else:
@@ -371,7 +371,6 @@ elif menu == "📑 จัดการสินค้า (รายโซน)":
             mask = (numeric_stocks >= -1000) & (numeric_stocks <= 0)
             filtered_df = base_df[mask].copy()
             filtered_df["_sort_num"] = filtered_df["คงเหลือ"].apply(parse_numeric_stock)
-            # เรียงจากติดลบมากที่สุด (-1000) ไล่ลงมาหา 0
             filtered_df = filtered_df.sort_values(by="_sort_num", ascending=True).drop(columns=["_sort_num"])
         elif selected_range == "1-10":
             filtered_df = base_df[(numeric_stocks >= 1) & (numeric_stocks <= 10)]
@@ -435,7 +434,7 @@ elif menu == "📑 จัดการสินค้า (รายโซน)":
             
             st.download_button(
                 label=f"📥 ดาวน์โหลดไฟล์ Excel โซน {selected_zone} (.xlsx)",
-                data=output.getvalue>,
+                data=output.getvalue(),
                 file_name=f"ข้อมูลสินค้า_โซน_{selected_zone}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
@@ -454,7 +453,6 @@ elif menu == "⚠️ สินค้าที่มีปัญหา (คงเ
         numeric_stocks = df_zone["คงเหลือ"].apply(parse_numeric_stock)
         problem_df = df_zone[numeric_stocks < 0].copy()
         
-        # เรียงลำดับติดลบมากที่สุดขึ้นก่อน
         problem_df["_sort_num"] = problem_df["คงเหลือ"].apply(parse_numeric_stock)
         problem_df = problem_df.sort_values(by="_sort_num", ascending=True).drop(columns=["_sort_num"]).reset_index(drop=True)
         
