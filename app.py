@@ -4,6 +4,7 @@ import numpy as np
 import re
 import io
 import os
+from datetime import datetime
 from pypdf import PdfReader
 
 # ตั้งค่าหน้าเว็บ
@@ -26,6 +27,7 @@ div[data-testid="stFileUploaderDeleteBtn"] {
 """, unsafe_allow_html=True)
 
 DB_FILE = "database_inventory.csv"
+HISTORY_FILE = "upload_history.csv"
 
 # รายการโซนทั้งหมด 30 โซน
 ALL_ZONES = [
@@ -36,7 +38,7 @@ ALL_ZONES = [
 ]
 
 # ==========================================
-# 1. ฟังก์ชันจัดการฐานข้อมูลและการประมวลผล
+# 1. ฟังก์ชันจัดการฐานข้อมูลและประวัติการอัปโหลด
 # ==========================================
 def load_database():
     if os.path.exists(DB_FILE):
@@ -48,6 +50,55 @@ def load_database():
 
 def save_database(df):
     df.to_csv(DB_FILE, index=False)
+
+def load_history():
+    if os.path.exists(HISTORY_FILE):
+        try:
+            h_df = pd.read_csv(HISTORY_FILE)
+            h_df["วันที่อัปโหลด"] = pd.to_datetime(h_df["วันที่อัปโหลด"], errors="coerce")
+            return h_df
+        except Exception:
+            return pd.DataFrame()
+    return pd.DataFrame()
+
+def log_upload_history(uploaded_df, source_file, zone):
+    if uploaded_df.empty:
+        return
+    
+    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    temp_df = uploaded_df.copy()
+    temp_df["_numeric_stock"] = temp_df["คงเหลือ"].apply(parse_numeric_stock)
+    
+    # รวมข้อมูลตามแท็กของไฟล์ที่อัปโหลด
+    grouped = temp_df.groupby("แท็ก {Tag}").agg(
+        จำนวนรายการ=("รหัสสินค้า", "count"),
+        สต็อกรวม=("_numeric_stock", "sum"),
+        จำนวนสินค้าติดลบ=("_numeric_stock", lambda x: (x < 0).sum())
+    ).reset_index()
+    
+    records = []
+    for _, row in grouped.iterrows():
+        records.append({
+            "วันที่อัปโหลด": current_time,
+            "ชื่อไฟล์": source_file,
+            "โซน": zone,
+            "แท็ก {Tag}": row["แท็ก {Tag}"],
+            "จำนวนรายการ": int(row["จำนวนรายการ"]),
+            "สต็อกรวม": float(row["สต็อกรวม"]),
+            "จำนวนสินค้าติดลบ": int(row["จำนวนสินค้าติดลบ"])
+        })
+    
+    new_history_df = pd.DataFrame(records)
+    if os.path.exists(HISTORY_FILE):
+        try:
+            old_h = pd.read_csv(HISTORY_FILE)
+            combined_h = pd.concat([old_h, new_history_df], ignore_index=True)
+        except Exception:
+            combined_h = new_history_df
+    else:
+        combined_h = new_history_df
+        
+    combined_h.to_csv(HISTORY_FILE, index=False)
 
 def format_tag_value(val):
     s = str(val).strip()
@@ -112,31 +163,26 @@ def clean_and_prepare_df(raw_df, source_name, target_zone):
     df = raw_df.copy()
     df.columns = [f"{c}_{i}" if list(df.columns).count(c) > 1 else c for i, c in enumerate(df.columns)]
     
-    # กำหนดโซนให้อิงตามเป้าหมายที่เลือกอัปโหลดเสมอ
     df["โซน"] = str(target_zone).upper().strip()
         
-    # รหัสสินค้า
     barcode_col = next((c for c in df.columns if any(k in str(c).lower() for k in ["รหัสสินค้า", "barcode", "บาร์โค้ด"]) or str(c).strip() == "รหัส"), None)
     if barcode_col:
         df["รหัสสินค้า"] = df[barcode_col].astype(str).str.replace(":", "", regex=False).str.replace(r'\.0$', '', regex=True).str.strip()
     elif len(df.columns) > 2:
         df["รหัสสินค้า"] = df.iloc[:, 2].astype(str).str.replace(":", "", regex=False).str.replace(r'\.0$', '', regex=True).str.strip()
 
-    # รหัสรอง
     sub_col = next((c for c in df.columns if any(k in str(c).lower() for k in ["รหัสรอง", "item_code"])), None)
     if sub_col:
         df["รหัสรอง"] = df[sub_col].astype(str).str.replace(":", "", regex=False).str.replace(r'\.0$', '', regex=True).str.strip()
     elif len(df.columns) > 3:
         df["รหัสรอง"] = df.iloc[:, 3].astype(str).str.replace(":", "", regex=False).str.replace(r'\.0$', '', regex=True).str.strip()
 
-    # ยอดคงเหลือ
     stock_col = next((c for c in df.columns if "คงเหลือ" in str(c)), None)
     if stock_col:
         df["คงเหลือ"] = df[stock_col].astype(str).str.replace(":", "", regex=False).str.strip()
     elif len(df.columns) > 1:
         df["คงเหลือ"] = df.iloc[:, 1].astype(str).str.replace(":", "", regex=False).str.strip()
 
-    # แท็กและชื่อสินค้า
     tag_col = next((c for c in df.columns if "แท็ก" in str(c) or "tag" in str(c).lower()), None)
     name_col = next((c for c in df.columns if any(k in str(c) for k in ["ชื่อ", "รายละ", "ยศ", "รายการ"])), None)
     if name_col is None and len(df.columns) > 4:
@@ -217,7 +263,13 @@ with st.sidebar:
     st.title("📦 TKK ERP Control")
     menu = st.radio(
         "🎯 เลือกฟังก์ชันการทำงาน",
-        ["📊 ภาพรวมคลังสินค้า", "📑 จัดการสินค้า (รายโซน)", "⚠️ สินค้าที่มีปัญหา (คงเหลือติดลบ)", "🔍 ค้นหาสินค้า & Tag"]
+        [
+            "📊 ภาพรวมคลังสินค้า", 
+            "📑 จัดการสินค้า (รายโซน)", 
+            "⚠️ สินค้าที่มีปัญหา (คงเหลือติดลบ)", 
+            "📈 สรุปรายงานรายเดือน & รายปี",
+            "🔍 ค้นหาสินค้า & Tag"
+        ]
     )
     
     st.divider()
@@ -252,6 +304,8 @@ with st.sidebar:
                     if not t_df.empty:
                         t_df["โซน"] = str(selected_zone).upper().strip()
                         preview_dfs.append(t_df)
+                        # บันทึกประวัติการนำเข้าไฟล์แยกตามแท็กและโซน
+                        log_upload_history(t_df, u_file.name, selected_zone)
                 except Exception as e:
                     st.error(f"ไฟล์ {u_file.name} ผิดพลาด: {e}")
             
@@ -291,11 +345,10 @@ with st.sidebar:
             st.caption("ยังไม่มีข้อมูลในระบบ")
 
 # ==========================================
-# 3. หน้าจอการทำงานหลัก (กรองเฉพาะโซนที่เลือก)
+# 3. หน้าจอการทำงานหลัก
 # ==========================================
 df_all = st.session_state.current_df
 
-# กรองอ่านค่าเฉพาะโซนที่เลือกเท่านั้น
 if not df_all.empty and "โซน" in df_all.columns:
     df_zone = df_all[df_all["โซน"].astype(str).str.upper().str.strip() == str(selected_zone).upper().strip()].reset_index(drop=True)
 else:
@@ -331,7 +384,7 @@ if menu == "📊 ภาพรวมคลังสินค้า":
         st.info("💡 ยังไม่มีข้อมูลสินค้าในระบบ กรุณาเลือกโซนและอัปโหลดไฟล์ที่แถบเมนูด้านซ้าย")
 
 # ------------------------------------------
-# ฟังก์ชัน 2: จัดการสินค้า (รายโซน - เฉพาะโซนที่ติ๊กเลือก)
+# ฟังก์ชัน 2: จัดการสินค้า (รายโซน)
 # ------------------------------------------
 elif menu == "📑 จัดการสินค้า (รายโซน)":
     st.title(f"📑 ระบบจัดการสินค้าประจำโซน : {selected_zone}")
@@ -440,7 +493,7 @@ elif menu == "📑 จัดการสินค้า (รายโซน)":
         st.info(f"👈 โซน **{selected_zone}** ยังไม่มีข้อมูลสินค้า คลิกที่เมนูด้านซ้าย **'📥 เพิ่มไฟล์ข้อมูลเข้าโซน {selected_zone}'** เพื่ออัปโหลด")
 
 # ------------------------------------------
-# ฟังก์ชัน 3: สินค้าที่มีปัญหา (เฉพาะโซนที่ติ๊กเลือก)
+# ฟังก์ชัน 3: สินค้าที่มีปัญหา (คงเหลือติดลบ)
 # ------------------------------------------
 elif menu == "⚠️ สินค้าที่มีปัญหา (คงเหลือติดลบ)":
     st.title(f"⚠️ สินค้าที่มีปัญหา [คงเหลือติดลบ -] : โซน {selected_zone}")
@@ -490,7 +543,101 @@ elif menu == "⚠️ สินค้าที่มีปัญหา (คงเ
         st.info(f"👈 โซน {selected_zone} ยังไม่มีข้อมูลสินค้า")
 
 # ------------------------------------------
-# ฟังก์ชัน 4: ค้นหาสินค้า & Tag
+# ฟังก์ชัน 4: สรุปรายงานรายเดือน & รายปี (ใหม่)
+# ------------------------------------------
+elif menu == "📈 สรุปรายงานรายเดือน & รายปี":
+    st.title("📈 สรุปรายงานรายเดือน & รายปี (วิเคราะห์จากการนำเข้าไฟล์)")
+    
+    df_history = load_history()
+    
+    if not df_history.empty:
+        # เตรียมคอลัมน์ปีและเดือน
+        df_history["Year"] = df_history["วันที่อัปโหลด"].dt.year
+        df_history["Month"] = df_history["วันที่อัปโหลด"].dt.strftime("%Y-%m")
+        
+        c_period, c_filter = st.columns([1, 2])
+        with c_period:
+            report_type = st.radio("🗓️ เลือกมุมมองสรุป:", ["📅 สรุปรายเดือน (Monthly)", "🗓️ สรุปรายปี (Yearly)"], horizontal=True)
+            
+        with c_filter:
+            if report_type == "📅 สรุปรายเดือน (Monthly)":
+                month_list = sorted(list(df_history["Month"].dropna().unique()), reverse=True)
+                selected_period = st.selectbox("เลือกเดือนที่ต้องการดูรายงาน:", options=month_list)
+                report_df = df_history[df_history["Month"] == selected_period].copy()
+            else:
+                year_list = sorted(list(df_history["Year"].dropna().unique()), reverse=True)
+                selected_period = st.selectbox("เลือกปีที่ต้องการดูรายงาน:", options=year_list)
+                report_df = df_history[df_history["Year"] == selected_period].copy()
+
+        st.markdown("---")
+        
+        # แสดง Metrics สรุปรวมของช่วงเวลานั้น
+        total_files = report_df["ชื่อไฟล์"].nunique()
+        total_items_uploaded = report_df["จำนวนรายการ"].sum()
+        total_stock_net = report_df["สต็อกรวม"].sum()
+        total_negatives = report_df["จำนวนสินค้าติดลบ"].sum()
+        
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("📁 ไฟล์ที่นำเข้า", f"{total_files:,} ครั้ง")
+        c2.metric("📦 รายการสินค้ารวม", f"{total_items_uploaded:,} รายการ")
+        c3.metric("📊 ยอดสต็อกรวมสุทธิ", f"{total_stock_net:,.0f} ชิ้น")
+        c4.metric("🚨 สินค้าติดลบสะสม", f"{total_negatives:,} รายการ")
+
+        st.markdown("---")
+        
+        # แท็บแยกการวิเคราะห์
+        tab_tag, tab_zone, tab_history = st.tabs(["🏷️ สรุปแยกตามแท็ก (Tag Analysis)", "📍 สรุปแยกตามโซน (Zone Analysis)", "📑 ประวัติการนำเข้าไฟล์ทั้งหมด"])
+        
+        with tab_tag:
+            st.subheader(f"📊 ยอดรวมแยกตามแต่ละแท็ก ({selected_period})")
+            tag_summary = report_df.groupby("แท็ก {Tag}").agg(
+                จำนวนรายการ=("จำนวนรายการ", "sum"),
+                สต็อกรวม=("สต็อกรวม", "sum"),
+                สินค้าติดลบ=("จำนวนสินค้าติดลบ", "sum")
+            ).reset_index().sort_values(by="จำนวนรายการ", ascending=False)
+            
+            st.dataframe(tag_summary, use_container_width=True, hide_index=True)
+            
+            if not tag_summary.empty:
+                st.bar_chart(data=tag_summary.set_index("แท็ก {Tag}")[["จำนวนรายการ", "สินค้าติดลบ"]])
+
+        with tab_zone:
+            st.subheader(f"📍 ยอดรวมแยกตามแต่ละโซน ({selected_period})")
+            zone_summary = report_df.groupby("โซน").agg(
+                จำนวนครั้งที่อัปโหลด=("ชื่อไฟล์", "nunique"),
+                จำนวนรายการ=("จำนวนรายการ", "sum"),
+                สต็อกรวม=("สต็อกรวม", "sum"),
+                สินค้าติดลบ=("จำนวนสินค้าติดลบ", "sum")
+            ).reset_index().sort_values(by="จำนวนรายการ", ascending=False)
+            
+            st.dataframe(zone_summary, use_container_width=True, hide_index=True)
+            
+            if not zone_summary.empty:
+                st.bar_chart(data=zone_summary.set_index("โซน")[["จำนวนรายการ", "สต็อกรวม"]])
+
+        with tab_history:
+            st.subheader(f"📜 บันทึกประวัติการนำเข้าไฟล์ ({selected_period})")
+            st.dataframe(report_df.sort_values(by="วันที่อัปโหลด", ascending=False), use_container_width=True, hide_index=True)
+
+        st.divider()
+        # ส่งออกรายงาน Excel
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            tag_summary.to_excel(writer, sheet_name="สรุปตามแท็ก", index=False)
+            zone_summary.to_excel(writer, sheet_name="สรุปตามโซน", index=False)
+            report_df.to_excel(writer, sheet_name="ประวัติการอัปโหลด", index=False)
+        
+        st.download_button(
+            label=f"📥 ดาวน์โหลดรายงานสรุป ({selected_period}) เป็น Excel (.xlsx)",
+            data=output.getvalue(),
+            file_name=f"รายงานสรุป_TKK_{selected_period}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+    else:
+        st.info("💡 ยังไม่มีประวัติการอัปโหลดไฟล์ในระบบ เมื่อคุณเพิ่มไฟล์ในแต่ละโซน ระบบจะเริ่มเก็บสถิติและสร้างรายงานสรุปรายเดือน/รายปีให้อัตโนมัติทันที")
+
+# ------------------------------------------
+# ฟังก์ชัน 5: ค้นหาสินค้า & Tag
 # ------------------------------------------
 elif menu == "🔍 ค้นหาสินค้า & Tag":
     st.title("🔍 ค้นหาและจัดกลุ่มสินค้าตาม Tag / รหัส")
