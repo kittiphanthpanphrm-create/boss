@@ -36,7 +36,7 @@ ALL_ZONES = [
 ]
 
 # ==========================================
-# 1. ฟังก์ชันจัดการฐานข้อมูลและการประมวลผลแบบมาตรฐาน AA
+# 1. ฟังก์ชันจัดการฐานข้อมูลและการประมวลผล
 # ==========================================
 def load_database():
     if os.path.exists(DB_FILE):
@@ -112,31 +112,31 @@ def clean_and_prepare_df(raw_df, source_name, target_zone):
     df = raw_df.copy()
     df.columns = [f"{c}_{i}" if list(df.columns).count(c) > 1 else c for i, c in enumerate(df.columns)]
     
-    # 1. โซน (บังคับตามโซนที่เลือกอัปโหลด)
+    # กำหนดโซนให้อิงตามเป้าหมายที่เลือกอัปโหลดเสมอ
     df["โซน"] = str(target_zone).upper().strip()
         
-    # 2. รหัสสินค้า
+    # รหัสสินค้า
     barcode_col = next((c for c in df.columns if any(k in str(c).lower() for k in ["รหัสสินค้า", "barcode", "บาร์โค้ด"]) or str(c).strip() == "รหัส"), None)
     if barcode_col:
         df["รหัสสินค้า"] = df[barcode_col].astype(str).str.replace(":", "", regex=False).str.replace(r'\.0$', '', regex=True).str.strip()
     elif len(df.columns) > 2:
         df["รหัสสินค้า"] = df.iloc[:, 2].astype(str).str.replace(":", "", regex=False).str.replace(r'\.0$', '', regex=True).str.strip()
 
-    # 3. รหัสรอง
+    # รหัสรอง
     sub_col = next((c for c in df.columns if any(k in str(c).lower() for k in ["รหัสรอง", "item_code"])), None)
     if sub_col:
         df["รหัสรอง"] = df[sub_col].astype(str).str.replace(":", "", regex=False).str.replace(r'\.0$', '', regex=True).str.strip()
     elif len(df.columns) > 3:
         df["รหัสรอง"] = df.iloc[:, 3].astype(str).str.replace(":", "", regex=False).str.replace(r'\.0$', '', regex=True).str.strip()
 
-    # 4. ยอดคงเหลือ
+    # ยอดคงเหลือ
     stock_col = next((c for c in df.columns if "คงเหลือ" in str(c)), None)
     if stock_col:
         df["คงเหลือ"] = df[stock_col].astype(str).str.replace(":", "", regex=False).str.strip()
     elif len(df.columns) > 1:
         df["คงเหลือ"] = df.iloc[:, 1].astype(str).str.replace(":", "", regex=False).str.strip()
 
-    # 5. แท็ก {Tag} และ ชื่อสินค้า (สกัดรูปแบบมาตรฐาน AA)
+    # แท็กและชื่อสินค้า
     tag_col = next((c for c in df.columns if "แท็ก" in str(c) or "tag" in str(c).lower()), None)
     name_col = next((c for c in df.columns if any(k in str(c) for k in ["ชื่อ", "รายละ", "ยศ", "รายการ"])), None)
     if name_col is None and len(df.columns) > 4:
@@ -227,7 +227,7 @@ with st.sidebar:
     st.divider()
     st.subheader(f"⚙️ การจัดการข้อมูล [โซน {selected_zone}]")
     
-    # เพิ่มไฟล์ข้อมูลเข้าโซน (ประมวลผลฟอร์มแบบ AA ทุกโซน)
+    # เพิ่มไฟล์ข้อมูลเข้าโซน
     with st.expander(f"📥 เพิ่มไฟล์ข้อมูลเข้าโซน {selected_zone}", expanded=False):
         uploaded_files = st.file_uploader(
             f"เลือกไฟล์สำหรับโซน {selected_zone} (PDF, CSV, XLSX)", 
@@ -250,7 +250,7 @@ with st.sidebar:
                         t_df = clean_and_prepare_df(pd.read_excel(u_file), u_file.name, selected_zone)
                     
                     if not t_df.empty:
-                        t_df["โซน"] = selected_zone
+                        t_df["โซน"] = str(selected_zone).upper().strip()
                         preview_dfs.append(t_df)
                 except Exception as e:
                     st.error(f"ไฟล์ {u_file.name} ผิดพลาด: {e}")
@@ -264,8 +264,8 @@ with st.sidebar:
                         st.session_state.current_df = combined_new_df
                     else:
                         st.session_state.current_df = pd.concat([st.session_state.current_df, combined_new_df], ignore_index=True)
-                        if "รหัสสินค้า" in st.session_state.current_df.columns:
-                            st.session_state.current_df.drop_duplicates(subset=["รหัสสินค้า"], keep="last", inplace=True)
+                        if "รหัสสินค้า" in st.session_state.current_df.columns and "โซน" in st.session_state.current_df.columns:
+                            st.session_state.current_df.drop_duplicates(subset=["รหัสสินค้า", "โซน"], keep="last", inplace=True)
                     
                     save_database(st.session_state.current_df)
                     st.session_state.uploader_key += 1
@@ -276,11 +276,11 @@ with st.sidebar:
     with st.expander(f"📁 ลบข้อมูลไฟล์ในโซน {selected_zone}", expanded=False):
         df_all = st.session_state.current_df
         if not df_all.empty and "โซน" in df_all.columns and "ชื่อไฟล์ที่มา" in df_all.columns:
-            zone_files = df_all[df_all["โซน"] == selected_zone]["ชื่อไฟล์ที่มา"].dropna().unique().tolist()
+            zone_files = df_all[df_all["โซน"].astype(str).str.upper().str.strip() == str(selected_zone).upper().strip()]["ชื่อไฟล์ที่มา"].dropna().unique().tolist()
             if zone_files:
                 selected_remove_file = st.selectbox("เลือกไฟล์ที่ต้องการลบ:", options=zone_files)
                 if st.button("🗑️ ยืนยันลบไฟล์นี้"):
-                    condition = (st.session_state.current_df["ชื่อไฟล์ที่มา"] == selected_remove_file) & (st.session_state.current_df["โซน"] == selected_zone)
+                    condition = (st.session_state.current_df["ชื่อไฟล์ที่มา"] == selected_remove_file) & (st.session_state.current_df["โซน"].astype(str).str.upper().str.strip() == str(selected_zone).upper().strip())
                     st.session_state.current_df = st.session_state.current_df[~condition]
                     save_database(st.session_state.current_df)
                     st.success(f"ลบข้อมูลสำเร็จ")
@@ -291,12 +291,13 @@ with st.sidebar:
             st.caption("ยังไม่มีข้อมูลในระบบ")
 
 # ==========================================
-# 3. หน้าจอการทำงานหลัก
+# 3. หน้าจอการทำงานหลัก (กรองเฉพาะโซนที่เลือก)
 # ==========================================
 df_all = st.session_state.current_df
 
+# กรองอ่านค่าเฉพาะโซนที่เลือกเท่านั้น
 if not df_all.empty and "โซน" in df_all.columns:
-    df_zone = df_all[df_all["โซน"] == selected_zone].reset_index(drop=True)
+    df_zone = df_all[df_all["โซน"].astype(str).str.upper().str.strip() == str(selected_zone).upper().strip()].reset_index(drop=True)
 else:
     df_zone = pd.DataFrame()
 
@@ -330,7 +331,7 @@ if menu == "📊 ภาพรวมคลังสินค้า":
         st.info("💡 ยังไม่มีข้อมูลสินค้าในระบบ กรุณาเลือกโซนและอัปโหลดไฟล์ที่แถบเมนูด้านซ้าย")
 
 # ------------------------------------------
-# ฟังก์ชัน 2: จัดการสินค้า (รายโซน - แสดงผลมาตรฐาน AA)
+# ฟังก์ชัน 2: จัดการสินค้า (รายโซน - เฉพาะโซนที่ติ๊กเลือก)
 # ------------------------------------------
 elif menu == "📑 จัดการสินค้า (รายโซน)":
     st.title(f"📑 ระบบจัดการสินค้าประจำโซน : {selected_zone}")
@@ -353,7 +354,7 @@ elif menu == "📑 จัดการสินค้า (รายโซน)":
         with col_v:
             display_type = st.radio("รูปแบบการแสดงผล:", ["🖼️ รูปภาพสินค้า (Cards)", "📋 ตารางข้อมูล (Table)"], horizontal=True)
 
-        # กรองข้อมูลตามแท็ก
+        # กรองเฉพาะแท็กภายในโซนที่เลือก
         if selected_tag == "📌 รวมทุกแท็ก (จัดกลุ่มตามแท็กอัตโนมัติ)":
             base_df = df_zone.copy()
         else:
@@ -436,10 +437,10 @@ elif menu == "📑 จัดการสินค้า (รายโซน)":
         else:
             st.warning(f"ℹ️ ไม่พบรายการสินค้าในโซน {selected_zone} สำหรับแท็ก '{selected_tag}' ที่ตรงกับเงื่อนไขสต็อก '{selected_range}'")
     else:
-        st.info(f"👈 โซน **{selected_zone}** ยังไม่มีข้อมูล คลิกที่เมนูด้านซ้าย **'📥 เพิ่มไฟล์ข้อมูลเข้าโซน {selected_zone}'** เพื่ออัปโหลด")
+        st.info(f"👈 โซน **{selected_zone}** ยังไม่มีข้อมูลสินค้า คลิกที่เมนูด้านซ้าย **'📥 เพิ่มไฟล์ข้อมูลเข้าโซน {selected_zone}'** เพื่ออัปโหลด")
 
 # ------------------------------------------
-# ฟังก์ชัน 3: สินค้าที่มีปัญหา (คงเหลือติดลบ - มาตรฐาน AA)
+# ฟังก์ชัน 3: สินค้าที่มีปัญหา (เฉพาะโซนที่ติ๊กเลือก)
 # ------------------------------------------
 elif menu == "⚠️ สินค้าที่มีปัญหา (คงเหลือติดลบ)":
     st.title(f"⚠️ สินค้าที่มีปัญหา [คงเหลือติดลบ -] : โซน {selected_zone}")
