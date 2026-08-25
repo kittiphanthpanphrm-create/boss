@@ -100,7 +100,7 @@ def extract_fields_from_text(text, source_name, target_zone):
             "แท็ก {Tag}": tag,
             "หน่วยนับ": m[5].strip(),
             "จำนวนสั่งล่าสุด": str(int(m[8])) if m[8].isdigit() else "0",
-            "โซน": extracted_zone.upper(),
+            "โซน": str(extracted_zone).upper().strip(),
             "คงเหลือ": str(m[6]).strip() if m[6] else "0",
             "สถานะ": m[7] if m[7] else "ปกติ",
             "ชื่อไฟล์ที่มา": source_name
@@ -110,30 +110,38 @@ def extract_fields_from_text(text, source_name, target_zone):
 def clean_and_prepare_df(raw_df, source_name, target_zone):
     df = raw_df.copy()
     
+    # แก้ปัญหาชื่อคอลัมน์ซ้ำ
+    df.columns = [f"{c}_{i}" if list(df.columns).count(c) > 1 else c for i, c in enumerate(df.columns)]
+    
+    # 1. โซน
     zone_col = next((c for c in df.columns if "โซน" in str(c)), None)
     if zone_col:
         df["โซน"] = df[zone_col].astype(str).str.replace("โซน", "", regex=False).str.replace(":", "", regex=False).str.strip().str.upper()
     else:
-        df["โซน"] = target_zone.upper()
+        df["โซน"] = str(target_zone).upper().strip()
         
+    # 2. รหัสสินค้า
     barcode_col = next((c for c in df.columns if "รหัสสินค้า" in str(c) or str(c).strip() == "รหัส" or "บาร์โค้ด" in str(c)), None)
     if barcode_col:
         df["รหัสสินค้า"] = df[barcode_col].astype(str).str.replace(":", "", regex=False).str.replace(r'\.0$', '', regex=True).str.strip()
     elif len(df.columns) > 2:
         df["รหัสสินค้า"] = df.iloc[:, 2].astype(str).str.replace(":", "", regex=False).str.replace(r'\.0$', '', regex=True).str.strip()
 
+    # 3. รหัสรอง
     sub_col = next((c for c in df.columns if "รหัสรอง" in str(c)), None)
     if sub_col:
         df["รหัสรอง"] = df[sub_col].astype(str).str.replace(":", "", regex=False).str.replace(r'\.0$', '', regex=True).str.strip()
     elif len(df.columns) > 3:
         df["รหัสรอง"] = df.iloc[:, 3].astype(str).str.replace(":", "", regex=False).str.replace(r'\.0$', '', regex=True).str.strip()
 
+    # 4. ยอดคงเหลือ
     stock_col = next((c for c in df.columns if "คงเหลือ" in str(c)), None)
     if stock_col:
         df["คงเหลือ"] = df[stock_col].astype(str).str.replace(":", "", regex=False).str.strip()
     elif len(df.columns) > 1:
         df["คงเหลือ"] = df.iloc[:, 1].astype(str).str.replace(":", "", regex=False).str.strip()
 
+    # 5. แท็ก {Tag} และ ชื่อสินค้า
     tag_col = next((c for c in df.columns if "แท็ก" in str(c) or "tag" in str(c).lower()), None)
     name_col = next((c for c in df.columns if any(k in str(c) for k in ["ชื่อ", "รายละ", "ยศ", "รายการ"])), None)
     if name_col is None and len(df.columns) > 4:
@@ -142,13 +150,13 @@ def clean_and_prepare_df(raw_df, source_name, target_zone):
     if tag_col:
         df["แท็ก {Tag}"] = df[tag_col].apply(format_tag_value)
         if name_col:
-            df["ชื่อรายการสินค้า"] = df[name_col].astype(str).str.replace("•", "").strip()
+            df["ชื่อรายการสินค้า"] = df[name_col].astype(str).str.replace("•", "", regex=False).str.strip()
         else:
             df["ชื่อรายการสินค้า"] = "-"
     elif name_col:
-        parsed_results = df[name_col].apply(parse_tag_and_clean_name)
-        df["แท็ก {Tag}"] = [res[0] for res in parsed_results]
-        df["ชื่อรายการสินค้า"] = [res[1] for res in parsed_results]
+        parsed = df[name_col].astype(str).apply(parse_tag_and_clean_name)
+        df["แท็ก {Tag}"] = [p[0] for p in parsed]
+        df["ชื่อรายการสินค้า"] = [p[1] for p in parsed]
     else:
         df["แท็ก {Tag}"] = "{ทั่วไป}"
         df["ชื่อรายการสินค้า"] = "-"
@@ -160,7 +168,7 @@ def clean_and_prepare_df(raw_df, source_name, target_zone):
     if "หน่วยนับ" not in df.columns:
         df["หน่วยนับ"] = "-"
         
-    df["ชื่อไฟล์ที่มา"] = source_name
+    df["ชื่อไฟล์ที่มา"] = str(source_name)
     standard_cols = ["รหัสสินค้า", "รหัสรอง", "ชื่อรายการสินค้า", "แท็ก {Tag}", "หน่วยนับ", "จำนวนสั่งล่าสุด", "โซน", "คงเหลือ", "สถานะ", "ชื่อไฟล์ที่มา"]
     existing_cols = [c for c in standard_cols if c in df.columns]
     return df[existing_cols]
@@ -238,7 +246,7 @@ with st.sidebar:
                         t_df = clean_and_prepare_df(pd.read_excel(u_file), u_file.name, selected_zone)
                     
                     if not t_df.empty:
-                        t_df["โซน"] = t_df["โซน"].replace({"": selected_zone, "-": selected_zone, "NAN": selected_zone}).fillna(selected_zone)
+                        t_df["โซน"] = t_df["โซน"].astype(str).replace({"": selected_zone, "-": selected_zone, "NAN": selected_zone}).fillna(selected_zone)
                         preview_dfs.append(t_df)
                 except Exception as e:
                     st.error(f"ไฟล์ {u_file.name} ผิดพลาด: {e}")
