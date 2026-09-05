@@ -1,132 +1,45 @@
-import streamlit as st
-import pandas as pd
-import numpy as np
-import re
 import io
 import os
-import altair as alt
-from datetime import datetime
+import re
+import pandas as pd
 from pypdf import PdfReader
+import requests
+import streamlit as st
 
-# ตั้งค่าหน้าเว็บ
-st.set_page_config(
-    page_title="TKK ERP - ระบบจัดการสต็อกและคลังสินค้า",
-    page_icon="📦",
-    layout="wide"
-)
+st.set_page_config(page_title="ระบบแยกคอลัมน์ & จัดการโซนสินค้า", layout="wide")
 
-# ปรับแต่งสไตล์ CSS ให้ตัวอักษรใหญ่ หนา และจัดช่องไฟสวยงาม
+# ซ่อนปุ่มกากบาทของ uploader
 st.markdown("""
 <style>
-/* ซ่อนปุ่มกากบาทของ uploader */
 button[aria-label="Delete"] {
     display: none !important;
 }
 div[data-testid="stFileUploaderDeleteBtn"] {
     display: none !important;
 }
-
-/* ตกแต่ง Sidebar */
-[data-testid="stSidebar"] {
-    padding-top: 1.5rem;
-    padding-bottom: 2rem;
-}
-
-.main-sidebar-title {
-    font-size: 1.65rem !important;
-    font-weight: 800 !important;
-    color: #1E293B;
-    margin-bottom: 1.25rem !important;
-    padding-bottom: 0.5rem;
-    border-bottom: 2px solid #E2E8F0;
-    letter-spacing: 0.5px;
-}
-
-.section-label {
-    font-size: 1.15rem !important;
-    font-weight: 700 !important;
-    color: #334155;
-    margin-top: 1rem !important;
-    margin-bottom: 0.6rem !important;
-    letter-spacing: 0.3px;
-}
-
-/* ตกแต่ง Radio Buttons ในแถบเมนูให้ตัวใหญ่ หนา และมีช่องไฟสวยงาม */
-div[data-testid="stRadio"] > label {
-    font-size: 1.1rem !important;
-    font-weight: 700 !important;
-    margin-bottom: 0.5rem !important;
-}
-
-div[data-testid="stRadio"] div[role="radiogroup"] > label {
-    font-size: 1.05rem !important;
-    font-weight: 600 !important;
-    padding: 0.45rem 0.6rem !important;
-    margin-bottom: 0.35rem !important;
-    border-radius: 6px;
-    transition: all 0.2s ease-in-out;
-}
-
-div[data-testid="stRadio"] div[role="radiogroup"] > label:hover {
-    background-color: #F1F5F9;
-}
-
-/* ตกแต่ง Selectbox & Slider */
-div[data-testid="stSelectbox"] label, div[data-testid="stSlider"] label {
-    font-size: 1.05rem !important;
-    font-weight: 700 !important;
-    color: #1E293B !important;
-    margin-bottom: 0.4rem !important;
-}
-
-/* ตกแต่งปุ่มหลัก (Buttons) */
-button[kind="primary"], button[kind="secondary"] {
-    font-size: 1rem !important;
-    font-weight: 700 !important;
-    padding: 0.55rem 1.2rem !important;
-    letter-spacing: 0.3px;
-    border-radius: 8px !important;
-}
-
-/* ปรับระยะห่างหัวข้อหลักในเนื้อหา */
-h1 {
-    font-size: 2rem !important;
-    font-weight: 800 !important;
-    margin-bottom: 1.25rem !important;
-    letter-spacing: 0.5px;
-}
-
-h2, h3 {
-    font-weight: 700 !important;
-    letter-spacing: 0.3px;
-}
-
-div[data-testid="stMetricValue"] {
-    font-size: 1.85rem !important;
-    font-weight: 800 !important;
-}
-
-div[data-testid="stMetricLabel"] {
-    font-size: 1rem !important;
-    font-weight: 700 !important;
-}
 </style>
 """, unsafe_allow_html=True)
 
 DB_FILE = "database_inventory.csv"
-SNAPSHOT_FILE = "inventory_snapshots.csv"
+NO_IMAGE_PLACEHOLDER = "https://placehold.co/400x400/f1f5f9/94a3b8?text=No+Image"
 
-# รายการโซนทั้งหมด 30 โซน
+# แคชการตรวจสอบ URL เพื่อให้หน้าเว็บโหลดเร็ว ไม่ต้องเช็กซ้ำทุกครั้งที่กดแท็บ
+@st.cache_data(ttl=3600, show_spinner=False)
+def check_image_exists(url):
+    try:
+        response = requests.head(url, timeout=1.5, allow_redirects=True)
+        return response.status_code == 200
+    except Exception:
+        return False
+
+# รายการโซนมาตรฐานทั้งหมด
 ALL_ZONES = [
-    "AA", "AB", "BB", "CC", "DD", "EE", "FF", "GG", "HH",
-    "IA", "IB", "IC", "II", "JJ", "KK", "LL", "MA", "MB", 
-    "MC", "MM", "NN", "OO", "PP", "QQ", "RR", "ST", "TT", 
+    "AA", "AB", "BB", "CC", "DD", "EE", "FF", "GG", 
+    "IA", "IB", "IC", "JJ", "KK", "LL", "MA", "MB", 
+    "MC", "MM", "NN", "PP", "QQ", "RR", "ST", "TT", 
     "UU", "XX", "YY"
 ]
 
-# ==========================================
-# 1. ฟังก์ชันจัดการฐานข้อมูลและ Snapshot
-# ==========================================
 def load_database():
     if os.path.exists(DB_FILE):
         try:
@@ -136,92 +49,7 @@ def load_database():
     return pd.DataFrame()
 
 def save_database(df):
-    df.to_csv(DB_FILE, index=False)
-
-def parse_numeric_stock(val):
-    try:
-        s = str(val).strip().replace(":", "")
-        return float(s)
-    except Exception:
-        return 0.0
-
-def load_snapshots():
-    if os.path.exists(SNAPSHOT_FILE):
-        try:
-            df = pd.read_csv(SNAPSHOT_FILE)
-            df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
-            return df
-        except Exception:
-            return pd.DataFrame()
-    return pd.DataFrame()
-
-def record_inventory_snapshot(df_to_record, source_file, target_zone):
-    if df_to_record.empty:
-        return
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    month_str = datetime.now().strftime("%Y-%m")
-    
-    records = []
-    for _, row in df_to_record.iterrows():
-        barcode = str(row.get("รหัสสินค้า", "")).strip()
-        sub_code = str(row.get("รหัสรอง", "")).strip()
-        name = str(row.get("ชื่อรายการสินค้า", "")).strip()
-        tag = str(row.get("แท็ก {Tag}", "{ทั่วไป}")).strip()
-        stock = parse_numeric_stock(row.get("คงเหลือ", 0))
-        
-        records.append({
-            "timestamp": now_str,
-            "month_year": month_str,
-            "filename": source_file,
-            "zone": target_zone,
-            "barcode": barcode,
-            "sub_code": sub_code,
-            "product_name": name,
-            "tag": tag,
-            "stock": stock
-        })
-    
-    new_snap_df = pd.DataFrame(records)
-    if os.path.exists(SNAPSHOT_FILE):
-        try:
-            old_snap = pd.read_csv(SNAPSHOT_FILE)
-            combined = pd.concat([old_snap, new_snap_df], ignore_index=True)
-        except Exception:
-            combined = new_snap_df
-    else:
-        combined = new_snap_df
-    combined.to_csv(SNAPSHOT_FILE, index=False)
-
-def format_tag_value(val):
-    s = str(val).strip()
-    if not s or s.lower() in ["nan", "none", "-", ""]:
-        return "{ทั่วไป}"
-    if s.startswith("{") and s.endswith("}"):
-        return s
-    m = re.search(r'[\{\[\(](.*?)[\}\]\)]', s)
-    if m:
-        return f"{{{m.group(1).strip()}}}"
-    return f"{{{s}}}"
-
-def parse_tag_and_clean_name(raw_text):
-    text = str(raw_text).replace("•", "").strip()
-    m_curly = re.search(r'\{([^}]+)\}', text)
-    if m_curly:
-        return f"{{{m_curly.group(1).strip()}}}", re.sub(r'\{[^}]+\}', '', text).strip()
-    
-    m_square = re.search(r'\[([^\]]+)\]', text)
-    if m_square:
-        return f"{{{m_square.group(1).strip()}}}", re.sub(r'\[[^\]]+\]', '', text).strip()
-
-    m_paren = re.search(r'\(([^)]+)\)', text)
-    if m_paren and len(m_paren.group(1).strip()) <= 15:
-        return f"{{{m_paren.group(1).strip()}}}", re.sub(r'\([^)]+\)', '', text).strip()
-
-    m_pipe = re.search(r'\|([^\|]+)\|', text)
-    if m_pipe:
-        return f"{{{m_pipe.group(1).strip()}}}", re.sub(r'\|[^\|]+\|', '', text).strip()
-        
-    return "{ทั่วไป}", text
+    df.to_csv(DB_FILE, index=False, encoding="utf-8-sig")
 
 def extract_fields_from_text(text, source_name, target_zone):
     pattern = re.compile(
@@ -231,151 +59,78 @@ def extract_fields_from_text(text, source_name, target_zone):
     matches = pattern.findall(text)
     data = []
     for m in matches:
-        raw_name = m[3].strip()
-        tag, clean_name = parse_tag_and_clean_name(raw_name)
-        if m[4]:
-            tag = f"{{{m[4].strip()}}}"
+        raw_tag = m[4].strip() if m[4] else ""
+        extracted_zone = m[9].strip() if m[9] else target_zone
         barcode = str(m[1]).strip()
         data.append({
             "#": m[0],
             "รหัสสินค้า": barcode,
             "รหัสรอง": str(m[2]).strip(),
-            "ชื่อรายการสินค้า": clean_name,
-            "แท็ก {Tag}": tag,
+            "ชื่อรายการสินค้า": m[3].strip(),
+            "แท็ก {Tag}": f"{{{raw_tag}}}" if raw_tag else "{ทั่วไป}",
             "หน่วยนับ": m[5].strip(),
             "จำนวนสั่งล่าสุด": str(int(m[8])) if m[8].isdigit() else "0",
-            "โซน": str(target_zone).upper().strip(),
-            "คงเหลือ": str(m[6]).strip() if m[6] else "0",
-            "สถานะ": m[7] if m[7] else "พร้อมขาย",
+            "โซน": extracted_zone,
+            "คงเหลือ": str(float(m[6])) if m[6] else "0",
+            "สถานะ": m[7] if m[7] else "ปกติ",
             "ชื่อไฟล์ที่มา": source_name
         })
     return pd.DataFrame(data)
 
 def clean_and_prepare_df(raw_df, source_name, target_zone):
     df = raw_df.copy()
-    df.columns = [f"{c}_{i}" if list(df.columns).count(c) > 1 else c for i, c in enumerate(df.columns)]
+    for col in df.columns:
+        if "รหัสสินค้า" in str(col) or str(col) == "รหัส":
+            df["รหัสสินค้า"] = df[col].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+        if "รหัสรอง" in str(col):
+            df["รหัสรอง"] = df[col].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+            
+    if "แท็ก {Tag}" not in df.columns:
+        name_col = next((c for c in df.columns if "ชื่อ" in str(c) or "รายละ" in str(c)), df.columns[3] if len(df.columns) > 3 else df.columns[0])
+        def get_tag(x):
+            m = re.search(r'\{([^}]+)\}', str(x))
+            return f"{{{m.group(1).strip()}}}" if m else "{ทั่วไป}"
+        def get_name(x):
+            return re.sub(r'\{[^}]+\}', '', str(x)).strip()
+            
+        df["แท็ก {Tag}"] = df[name_col].apply(get_tag)
+        df["ชื่อรายการสินค้า"] = df[name_col].apply(get_name)
+    else:
+        df["แท็ก {Tag}"] = df["แท็ก {Tag}"].fillna("{ทั่วไป}").astype(str).str.strip()
     
-    df["โซน"] = str(target_zone).upper().strip()
-        
-    barcode_col = next((c for c in df.columns if any(k in str(c).lower() for k in ["รหัสสินค้า", "barcode", "บาร์โค้ด"]) or str(c).strip() == "รหัส"), None)
-    if barcode_col:
-        df["รหัสสินค้า"] = df[barcode_col].astype(str).str.replace(":", "", regex=False).str.replace(r'\.0$', '', regex=True).str.strip()
-    elif len(df.columns) > 2:
-        df["รหัสสินค้า"] = df.iloc[:, 2].astype(str).str.replace(":", "", regex=False).str.replace(r'\.0$', '', regex=True).str.strip()
-
-    sub_col = next((c for c in df.columns if any(k in str(c).lower() for k in ["รหัสรอง", "item_code"])), None)
-    if sub_col:
-        df["รหัสรอง"] = df[sub_col].astype(str).str.replace(":", "", regex=False).str.replace(r'\.0$', '', regex=True).str.strip()
-    elif len(df.columns) > 3:
-        df["รหัสรอง"] = df.iloc[:, 3].astype(str).str.replace(":", "", regex=False).str.replace(r'\.0$', '', regex=True).str.strip()
-
-    stock_col = next((c for c in df.columns if "คงเหลือ" in str(c)), None)
-    if stock_col:
-        df["คงเหลือ"] = df[stock_col].astype(str).str.replace(":", "", regex=False).str.strip()
-    elif len(df.columns) > 1:
-        df["คงเหลือ"] = df.iloc[:, 1].astype(str).str.replace(":", "", regex=False).str.strip()
-
-    tag_col = next((c for c in df.columns if "แท็ก" in str(c) or "tag" in str(c).lower()), None)
-    name_col = next((c for c in df.columns if any(k in str(c) for k in ["ชื่อ", "รายละ", "ยศ", "รายการ"])), None)
-    if name_col is None and len(df.columns) > 4:
-        name_col = df.columns[4]
-
-    if tag_col:
-        df["แท็ก {Tag}"] = df[tag_col].apply(format_tag_value)
-        if name_col:
-            df["ชื่อรายการสินค้า"] = df[name_col].astype(str).str.replace("•", "", regex=False).str.strip()
-        else:
-            df["ชื่อรายการสินค้า"] = "-"
-    elif name_col:
-        parsed = df[name_col].astype(str).apply(parse_tag_and_clean_name)
-        df["แท็ก {Tag}"] = [p[0] for p in parsed]
-        df["ชื่อรายการสินค้า"] = [p[1] for p in parsed]
+    for c in df.columns:
+        if "สั่ง" in str(c):
+            df["จำนวนสั่งล่าสุด"] = pd.to_numeric(df[c], errors="coerce").fillna(0).astype(int).astype(str)
+        if "คงเหลือ" in str(c):
+            df["คงเหลือ"] = pd.to_numeric(df[c], errors="coerce").fillna(0).astype(str)
+            
+    if "โซน" not in df.columns:
+        df["โซน"] = target_zone
     else:
-        df["แท็ก {Tag}"] = "{ทั่วไป}"
-        df["ชื่อรายการสินค้า"] = "-"
-
-    # จัดการคอลัมน์สถานะ
-    status_col = next((c for c in df.columns if "สถานะ" in str(c)), None)
-    if status_col:
-        df["สถานะ"] = df[status_col].astype(str).str.strip()
-    else:
-        df["สถานะ"] = "พร้อมขาย"
-
-    if "จำนวนสั่งล่าสุด" not in df.columns:
-        df["จำนวนสั่งล่าสุด"] = "0"
-    if "หน่วยนับ" not in df.columns:
-        df["หน่วยนับ"] = "-"
+        df["โซน"] = df["โซน"].fillna(target_zone).astype(str).str.strip()
         
-    df["ชื่อไฟล์ที่มา"] = str(source_name)
+    df["ชื่อไฟล์ที่มา"] = source_name
     standard_cols = ["รหัสสินค้า", "รหัสรอง", "ชื่อรายการสินค้า", "แท็ก {Tag}", "หน่วยนับ", "จำนวนสั่งล่าสุด", "โซน", "คงเหลือ", "สถานะ", "ชื่อไฟล์ที่มา"]
     existing_cols = [c for c in standard_cols if c in df.columns]
     return df[existing_cols]
 
-def render_product_cards(items_df, current_zone, is_problem=False):
-    cols = st.columns(3)
-    for idx, row in items_df.iterrows():
-        barcode = str(row.get("รหัสสินค้า", "")).strip()
-        sub_code = str(row.get("รหัสรอง", "")).strip()
-        name = str(row.get("ชื่อรายการสินค้า", "")).strip()
-        qty = row.get("จำนวนสั่งล่าสุด", 0)
-        stock = row.get("คงเหลือ", 0)
-        
-        img_url = f"https://tkkonlineshop.com/images/products/{barcode}.jpg"
-        web_link = f"https://tkkonlineshop.com/products/{barcode}"
-        
-        with cols[idx % 3]:
-            with st.container(border=True):
-                st.image(
-                    img_url, 
-                    caption=f"รหัส: {barcode}", 
-                    use_container_width=True
-                )
-                st.markdown(f"### **{name}**")
-                st.caption(f"**รหัสสินค้า:** `{barcode}` | **โซน:** `{current_zone}`")
-                st.markdown(f"📋 **รหัสรอง (คลิกเพื่อ Copy):**")
-                st.code(sub_code, language="text")
-                if is_problem or parse_numeric_stock(stock) < 0:
-                    st.markdown(f"🚨 **คงเหลือ:** :red[{stock}] | 🛒 **สั่งล่าสุด:** **{qty}**")
-                else:
-                    st.markdown(f"📦 **คงเหลือ:** **{stock}** | 🛒 **สั่งล่าสุด:** **{qty}**")
-                st.link_button("🌐 เปิดดูบนเว็บ TKK Online", web_link, use_container_width=True)
-
-# โหลดฐานข้อมูล
 if "current_df" not in st.session_state:
     st.session_state.current_df = load_database()
 if "uploader_key" not in st.session_state:
     st.session_state.uploader_key = 0
 
-# ==========================================
-# 2. แถบเมนูด้านซ้าย (Sidebar) - "จัดการสต็อก"
-# ==========================================
+# --- แถบเมนูด้านซ้าย (Sidebar) ---
 with st.sidebar:
-    st.markdown('<div class="main-sidebar-title">📦 จัดการสต็อก</div>', unsafe_allow_html=True)
-    
-    st.markdown('<div class="section-label">🎯 ฟังก์ชันการทำงาน</div>', unsafe_allow_html=True)
-    menu = st.radio(
-        "",
-        [
-            "📊 ภาพรวมคลังสินค้า", 
-            "📑 จัดการสินค้า (รายโซน)", 
-            "⚠️ สินค้าที่มีปัญหา (คงเหลือติดลบ)", 
-            "📈 สรุปรายงานรายเดือน (วิเคราะห์การเปลี่ยนแปลง)",
-            "🔍 ค้นหาสินค้า & Tag"
-        ]
-    )
+    st.header("📍 โซนสินค้า")
+    selected_zone = st.selectbox("เลือกโซนที่ต้องการจัดการ / ดูข้อมูล:", options=ALL_ZONES)
     
     st.divider()
-    st.markdown('<div class="section-label">📍 โซนสินค้า (30 โซน)</div>', unsafe_allow_html=True)
-    selected_zone = st.selectbox("เลือกโซนที่ต้องการเข้าดู:", options=ALL_ZONES, index=0)
+    st.subheader(f"⚙️ จัดการ [โซน {selected_zone}]")
     
-    st.divider()
-    st.markdown(f'<div class="section-label">⚙️ จัดการข้อมูล [โซน {selected_zone}]</div>', unsafe_allow_html=True)
-    
-    # เพิ่มไฟล์ข้อมูลเข้าโซน
     with st.expander(f"📥 เพิ่มไฟล์ข้อมูลเข้าโซน {selected_zone}", expanded=False):
         uploaded_files = st.file_uploader(
-            f"เลือกไฟล์สำหรับโซน {selected_zone} (PDF, CSV, XLSX)", 
-            type=["pdf", "csv", "xlsx", "xls"], 
+            f"เลือกไฟล์สำหรับโซน {selected_zone}", 
+            type=["pdf", "csv", "xlsx"], 
             accept_multiple_files=True,
             key=f"uploader_{selected_zone}_{st.session_state.uploader_key}"
         )
@@ -390,471 +145,127 @@ with st.sidebar:
                         t_df = extract_fields_from_text(full_text, u_file.name, selected_zone)
                     elif u_file.name.endswith(".csv"):
                         t_df = clean_and_prepare_df(pd.read_csv(u_file), u_file.name, selected_zone)
-                    elif u_file.name.endswith(".xlsx") or u_file.name.endswith(".xls"):
+                    elif u_file.name.endswith(".xlsx"):
                         t_df = clean_and_prepare_df(pd.read_excel(u_file), u_file.name, selected_zone)
                     
                     if not t_df.empty:
-                        t_df["โซน"] = str(selected_zone).upper().strip()
+                        t_df["โซน"] = t_df["โซน"].replace({"": selected_zone, "-": selected_zone}).fillna(selected_zone)
                         preview_dfs.append(t_df)
-                        record_inventory_snapshot(t_df, u_file.name, selected_zone)
                 except Exception as e:
                     st.error(f"ไฟล์ {u_file.name} ผิดพลาด: {e}")
             
             if preview_dfs:
                 combined_new_df = pd.concat(preview_dfs, ignore_index=True)
-                st.info(f"**เตรียมพร้อมบันทึก:** {len(combined_new_df)} รายการ เข้าโซน {selected_zone}")
+                st.info(f"เตรียมพร้อมบันทึก: {len(combined_new_df)} รายการ")
                 
-                if st.button(f"💾 ยืนยันบันทึกเข้าโซน {selected_zone}", type="primary"):
+                if st.button("💾 ยืนยันบันทึกเข้าสู่ระบบ", type="primary"):
                     if st.session_state.current_df.empty:
                         st.session_state.current_df = combined_new_df
                     else:
                         st.session_state.current_df = pd.concat([st.session_state.current_df, combined_new_df], ignore_index=True)
-                        if "รหัสสินค้า" in st.session_state.current_df.columns and "โซน" in st.session_state.current_df.columns:
-                            st.session_state.current_df.drop_duplicates(subset=["รหัสสินค้า", "โซน"], keep="last", inplace=True)
+                        if "รหัสสินค้า" in st.session_state.current_df.columns:
+                            st.session_state.current_df.drop_duplicates(subset=["รหัสสินค้า"], keep="last", inplace=True)
                     
                     save_database(st.session_state.current_df)
                     st.session_state.uploader_key += 1
-                    st.success(f"✅ บันทึกข้อมูลเข้าโซน {selected_zone} เรียบร้อย!")
+                    st.success("✅ บันทึกข้อมูลเรียบร้อย!")
                     st.rerun()
 
-    # ลบไฟล์ออกจากโซน
-    with st.expander(f"📁 ลบข้อมูลไฟล์ในโซน {selected_zone}", expanded=False):
+    with st.expander(f"📁 การจัดการข้อมูลโซน {selected_zone}", expanded=False):
         df_all = st.session_state.current_df
-        if not df_all.empty and "โซน" in df_all.columns and "ชื่อไฟล์ที่มา" in df_all.columns:
-            zone_files = df_all[df_all["โซน"].astype(str).str.upper().str.strip() == str(selected_zone).upper().strip()]["ชื่อไฟล์ที่มา"].dropna().unique().tolist()
+        if not df_all.empty and "โซน" in df_all.columns:
+            filter_cond = (df_all["โซน"] == selected_zone)
+            zone_files = df_all[filter_cond]["ชื่อไฟล์ที่มา"].dropna().unique().tolist()
             if zone_files:
                 selected_remove_file = st.selectbox("เลือกไฟล์ที่ต้องการลบ:", options=zone_files)
                 if st.button("🗑️ ยืนยันลบไฟล์นี้"):
-                    condition = (st.session_state.current_df["ชื่อไฟล์ที่มา"] == selected_remove_file) & (st.session_state.current_df["โซน"].astype(str).str.upper().str.strip() == str(selected_zone).upper().strip())
-                    st.session_state.current_df = st.session_state.current_df[~condition]
+                    del_cond = (st.session_state.current_df["ชื่อไฟล์ที่มา"] == selected_remove_file) & (st.session_state.current_df["โซน"] == selected_zone)
+                    st.session_state.current_df = st.session_state.current_df[~del_cond]
                     save_database(st.session_state.current_df)
-                    st.success(f"ลบข้อมูลสำเร็จ")
+                    st.success("ลบข้อมูลสำเร็จ")
                     st.rerun()
             else:
-                st.caption(f"ยังไม่มีไฟล์ข้อมูลในโซน {selected_zone}")
+                st.caption("ยังไม่มีไฟล์ข้อมูลในโซนนี้")
         else:
             st.caption("ยังไม่มีข้อมูลในระบบ")
 
-# ==========================================
-# 3. หน้าจอการทำงานหลัก
-# ==========================================
+# --- หน้าแดชบอร์ดหลัก ---
+st.title(f"📍 โซนสินค้า : {selected_zone}")
+
 df_all = st.session_state.current_df
 
 if not df_all.empty and "โซน" in df_all.columns:
-    df_zone = df_all[df_all["โซน"].astype(str).str.upper().str.strip() == str(selected_zone).upper().strip()].reset_index(drop=True)
+    df_zone = df_all[df_all["โซน"] == selected_zone].reset_index(drop=True)
 else:
     df_zone = pd.DataFrame()
 
-# ------------------------------------------
-# ฟังก์ชัน 1: ภาพรวมคลังสินค้า + แผนภูมิสัดส่วน 30 โซน
-# ------------------------------------------
-if menu == "📊 ภาพรวมคลังสินค้า":
-    st.title("📊 ภาพรวมคลังสินค้า (30 โซน)")
+if not df_zone.empty:
+    st.subheader("🏷️ รายการสินค้าจัดกลุ่มตามแท็ก {Tag}")
     
-    if not df_all.empty:
-        stock_nums = df_all["คงเหลือ"].apply(parse_numeric_stock) if "คงเหลือ" in df_all.columns else pd.Series([0]*len(df_all))
-        
-        # แก้ไขเงื่อนไขการนับสถานะเพื่อป้องกันคำว่า "เลิกขาย" ปนกับ "พร้อมขาย"
-        status_series = df_all["สถานะ"].astype(str).str.strip() if "สถานะ" in df_all.columns else pd.Series(["พร้อมขาย"]*len(df_all))
-        is_discontinued = status_series.str.contains("เลิก|ยกเลิก|หยุดขาย", na=False)
-        is_available = ~is_discontinued
-        
-        count_total = len(df_all)
-        count_available = is_available.sum()
-        count_discontinued = is_discontinued.sum()
-        count_negative = (stock_nums < 0).sum()
-
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("📦 รายการสินค้าทั้งหมด", f"{count_total:,} รายการ")
-        c2.metric("✅ สินค้าพร้อมขาย", f"{count_available:,} รายการ")
-        c3.metric("⛔ สินค้าเลิกขาย", f"{count_discontinued:,} รายการ")
-        c4.metric("⚠️ สต็อกติดลบ", f"{count_negative:,} รายการ")
-
-        st.markdown("---")
-        
-        # ==========================================
-        # ส่วนแผนภูมิสัดส่วนสินค้าทั้ง 30 โซน
-        # ==========================================
-        st.subheader("📊 แผนภูมิสัดส่วนจำนวนสินค้าในแต่ละโซน (ทั้ง 30 โซน)")
-        
-        # เตรียมตารางข้อมูลสัดส่วนครบ 30 โซน
-        zone_template = pd.DataFrame({"โซน": ALL_ZONES})
-        zone_actual_counts = df_all.groupby("โซน")["รหัสสินค้า"].count().reset_index().rename(columns={"รหัสสินค้า": "จำนวนสินค้า"})
-        zone_summary_30 = pd.merge(zone_template, zone_actual_counts, on="โซน", how="left").fillna(0)
-        zone_summary_30["จำนวนสินค้า"] = zone_summary_30["จำนวนสินค้า"].astype(int)
-        
-        total_items_count = zone_summary_30["จำนวนสินค้า"].sum()
-        if total_items_count > 0:
-            zone_summary_30["สัดส่วน (%)"] = (zone_summary_30["จำนวนสินค้า"] / total_items_count * 100).round(2)
-        else:
-            zone_summary_30["สัดส่วน (%)"] = 0.0
-
-        col_chart1, col_chart2 = st.columns([1.8, 1.2])
-        
-        with col_chart1:
-            st.markdown("##### 📈 จำนวนสินค้าแยกรายโซน (ครบทั้ง 30 โซน)")
-            bar_chart_data = zone_summary_30.set_index("โซน")[["จำนวนสินค้า"]]
-            st.bar_chart(bar_chart_data, color="#2563EB", use_container_width=True)
-            
-        with col_chart2:
-            st.markdown("##### 🍩 สัดส่วนเปอร์เซ็นต์ของโซนที่มีสินค้า")
-            active_zones = zone_summary_30[zone_summary_30["จำนวนสินค้า"] > 0].copy()
-            
-            if not active_zones.empty:
-                donut_chart = alt.Chart(active_zones).mark_arc(innerRadius=50).encode(
-                    theta=alt.Theta(field="จำนวนสินค้า", type="quantitative"),
-                    color=alt.Color(field="โซน", type="nominal", legend=alt.Legend(title="โซนสินค้า")),
-                    tooltip=["โซน", "จำนวนสินค้า", alt.Tooltip("สัดส่วน (%):Q", format=".2f")]
-                ).properties(height=320)
-                st.altair_chart(donut_chart, use_container_width=True)
-            else:
-                st.info("ยังไม่มีข้อมูลสินค้าในแต่ละโซน")
-
-        with st.expander("📋 ดูตารางสรุปสัดส่วนจำนวนสินค้าและเปอร์เซ็นต์ (ทั้ง 30 โซน)", expanded=False):
-            st.dataframe(
-                zone_summary_30, 
-                column_config={
-                    "จำนวนสินค้า": st.column_config.NumberColumn("จำนวนสินค้า", format="%d รายการ"),
-                    "สัดส่วน (%)": st.column_config.NumberColumn("สัดส่วน (%)", format="%.2f %%")
-                },
-                use_container_width=True, 
-                hide_index=True
-            )
-
-        st.markdown("---")
-        st.subheader("📋 ตารางข้อมูลสินค้าทั้งหมดในระบบ")
-        display_all_df = df_all.drop(columns=["ชื่อไฟล์ที่มา"], errors="ignore")
-        st.dataframe(display_all_df, use_container_width=True)
-
-        csv_data = display_all_df.to_csv(index=False, encoding="utf-8-sig")
-        st.download_button(
-            label="📥 ดาวน์โหลดข้อมูลทั้งหมด (Cleaned CSV)",
-            data=csv_data,
-            file_name="TKKERP_Cleaned_All.csv",
-            mime="text/csv"
-        )
-    else:
-        st.info("💡 ยังไม่มีข้อมูลสินค้าในระบบ กรุณาเลือกโซนและอัปโหลดไฟล์ที่แถบเมนูด้านซ้าย")
-
-# ------------------------------------------
-# ฟังก์ชัน 2: จัดการสินค้า (รายโซน)
-# ------------------------------------------
-elif menu == "📑 จัดการสินค้า (รายโซน)":
-    st.title(f"📑 ระบบจัดการสินค้าประจำโซน : {selected_zone}")
-
-    if not df_zone.empty:
-        col_t, col_s, col_v = st.columns([1.5, 2, 1.2])
-        
-        with col_t:
-            tag_list = sorted(list(df_zone["แท็ก {Tag}"].dropna().unique())) if "แท็ก {Tag}" in df_zone.columns else []
-            tag_options = ["📌 รวมทุกแท็ก (จัดกลุ่มตามแท็กอัตโนมัติ)"] + tag_list
-            selected_tag = st.selectbox("🏷️ เลือกแท็กสินค้า:", options=tag_options)
-
-        with col_s:
-            stock_ranges = [
-                "ทั้งหมด", "-1000 ถึง 0", "1-10", "10-20",
-                "20-30", "30-40", "40-50", "50-100", "100-200"
-            ]
-            selected_range = st.select_slider("🔢 เลือกช่วงจำนวนสต็อกคงเหลือ:", options=stock_ranges, value="ทั้งหมด")
-        
-        with col_v:
-            display_type = st.radio("รูปแบบการแสดงผล:", ["🖼️ รูปภาพสินค้า (Cards)", "📋 ตารางข้อมูล (Table)"], horizontal=True)
-
-        if selected_tag == "📌 รวมทุกแท็ก (จัดกลุ่มตามแท็กอัตโนมัติ)":
-            base_df = df_zone.copy()
-        else:
-            base_df = df_zone[df_zone["แท็ก {Tag}"] == selected_tag].copy()
-
-        numeric_stocks = base_df["คงเหลือ"].apply(parse_numeric_stock)
-
-        if selected_range == "-1000 ถึง 0":
-            mask = (numeric_stocks >= -1000) & (numeric_stocks <= 0)
-            filtered_df = base_df[mask].copy()
-            filtered_df["_sort_num"] = filtered_df["คงเหลือ"].apply(parse_numeric_stock)
-            filtered_df = filtered_df.sort_values(by="_sort_num", ascending=True).drop(columns=["_sort_num"])
-        elif selected_range == "1-10":
-            filtered_df = base_df[(numeric_stocks >= 1) & (numeric_stocks <= 10)]
-        elif selected_range == "10-20":
-            filtered_df = base_df[(numeric_stocks > 10) & (numeric_stocks <= 20)]
-        elif selected_range == "20-30":
-            filtered_df = base_df[(numeric_stocks > 20) & (numeric_stocks <= 30)]
-        elif selected_range == "30-40":
-            filtered_df = base_df[(numeric_stocks > 30) & (numeric_stocks <= 40)]
-        elif selected_range == "40-50":
-            filtered_df = base_df[(numeric_stocks > 40) & (numeric_stocks <= 50)]
-        elif selected_range == "50-100":
-            filtered_df = base_df[(numeric_stocks > 50) & (numeric_stocks <= 100)]
-        elif selected_range == "100-200":
-            filtered_df = base_df[(numeric_stocks > 100) & (numeric_stocks <= 200)]
-        else:
-            filtered_df = base_df.copy()
-
-        filtered_df = filtered_df.reset_index(drop=True)
-
-        st.markdown("---")
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("📍 โซนที่เลือก", f"โซน {selected_zone}")
-        m2.metric("🏷️ แท็กที่เลือก", "รวมทุกแท็ก" if selected_tag == "📌 รวมทุกแท็ก (จัดกลุ่มตามแท็กอัตโนมัติ)" else selected_tag)
-        m3.metric("🎯 เงื่อนไขสต็อก", selected_range)
-        m4.metric("📦 พบสินค้า", f"{len(filtered_df):,} รายการ")
-
-        if not filtered_df.empty:
-            if display_type == "🖼️ รูปภาพสินค้า (Cards)":
-                if selected_tag == "📌 รวมทุกแท็ก (จัดกลุ่มตามแท็กอัตโนมัติ)":
-                    present_tags = sorted(list(filtered_df["แท็ก {Tag}"].dropna().unique()))
-                    for tag in present_tags:
-                        group_df = filtered_df[filtered_df["แท็ก {Tag}"] == tag].reset_index(drop=True)
-                        with st.expander(f"📦 แท็ก: **{tag}** (พบ **{len(group_df)}** รายการ)", expanded=True):
-                            render_product_cards(group_df, selected_zone)
-                else:
-                    render_product_cards(filtered_df, selected_zone)
-            else:
-                def highlight_neg(val):
-                    try:
-                        num = float(str(val).replace(":", ""))
-                        if num < 0:
-                            return "background-color: #ffebee; color: #c62828; font-weight: bold;"
-                        elif num == 0:
-                            return "background-color: #fffde7; color: #f57f17; font-weight: bold;"
-                        return ""
-                    except Exception:
-                        return ""
-
-                try:
-                    styled_df = filtered_df.drop(columns=["ชื่อไฟล์ที่มา"], errors="ignore").style.map(highlight_neg, subset=["คงเหลือ"])
-                except AttributeError:
-                    styled_df = filtered_df.drop(columns=["ชื่อไฟล์ที่มา"], errors="ignore").style.applymap(highlight_neg, subset=["คงเหลือ"])
-
-                st.dataframe(styled_df, use_container_width=True)
-
-            st.divider()
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine="openpyxl") as writer:
-                filtered_df.drop(columns=["ชื่อไฟล์ที่มา"], errors="ignore").to_excel(writer, sheet_name=f"โซน_{selected_zone}", index=False)
-            
-            st.download_button(
-                label=f"📥 ดาวน์โหลดไฟล์ Excel โซน {selected_zone} (.xlsx)",
-                data=output.getvalue(),
-                file_name=f"ข้อมูลสินค้า_โซน_{selected_zone}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-        else:
-            st.warning(f"ℹ️ ไม่พบรายการสินค้าในโซน {selected_zone} สำหรับแท็ก '{selected_tag}' ที่ตรงกับเงื่อนไขสต็อก '{selected_range}'")
-    else:
-        st.info(f"👈 โซน **{selected_zone}** ยังไม่มีข้อมูลสินค้า คลิกที่เมนูด้านซ้าย **'📥 เพิ่มไฟล์ข้อมูลเข้าโซน {selected_zone}'** เพื่ออัปโหลด")
-
-# ------------------------------------------
-# ฟังก์ชัน 3: สินค้าที่มีปัญหา (คงเหลือติดลบ)
-# ------------------------------------------
-elif menu == "⚠️ สินค้าที่มีปัญหา (คงเหลือติดลบ)":
-    st.title(f"⚠️ สินค้าที่มีปัญหา [คงเหลือติดลบ -] : โซน {selected_zone}")
+    unique_tags = sorted(list(df_zone["แท็ก {Tag}"].dropna().unique()))
+    selected_tag = st.selectbox("🔍 เลือกกลุ่มแท็กเพื่อดูสินค้า:", options=["แสดงทุกกลุ่มแท็ก"] + unique_tags)
     
-    if not df_zone.empty and "คงเหลือ" in df_zone.columns:
-        numeric_stocks = df_zone["คงเหลือ"].apply(parse_numeric_stock)
-        problem_df = df_zone[numeric_stocks < 0].copy()
-        
-        problem_df["_sort_num"] = problem_df["คงเหลือ"].apply(parse_numeric_stock)
-        problem_df = problem_df.sort_values(by="_sort_num", ascending=True).drop(columns=["_sort_num"]).reset_index(drop=True)
-        
-        if not problem_df.empty:
-            st.error(f"🚨 พบสินค้าคงเหลือติดลบทั้งหมด **{len(problem_df)} รายการ** ในโซน {selected_zone}")
-            
-            prob_tags = sorted(list(problem_df["แท็ก {Tag}"].dropna().unique()))
-            tag_options = ["📌 รวมทุกแท็ก (จัดกลุ่มตามแท็กอัตโนมัติ)"] + prob_tags
-            selected_prob_tag = st.selectbox("🏷️ เลือกกลุ่มแท็กสินค้าที่มีปัญหา:", options=tag_options)
-            
-            if selected_prob_tag == "📌 รวมทุกแท็ก (จัดกลุ่มตามแท็กอัตโนมัติ)":
-                for tag in prob_tags:
-                    group_prob_df = problem_df[problem_df["แท็ก {Tag}"] == tag].reset_index(drop=True)
-                    with st.expander(f"🚨 แท็ก: **{tag}** (รวม **{len(group_prob_df)}** รายการ)", expanded=True):
-                        render_product_cards(group_prob_df, selected_zone, is_problem=True)
-            else:
-                filtered_prob_df = problem_df[problem_df["แท็ก {Tag}"] == selected_prob_tag].reset_index(drop=True)
-                st.write(f"พบ **{len(filtered_prob_df)} รายการ** ที่ติดลบ ในแท็ก `{selected_prob_tag}`")
-                render_product_cards(filtered_prob_df, selected_zone, is_problem=True)
-
-            st.divider()
-            st.subheader(f"📋 ตารางรายการสินค้าที่มีปัญหา [โซน {selected_zone}]")
-            display_prob_df = problem_df.drop(columns=["ชื่อไฟล์ที่มา"], errors="ignore")
-            st.dataframe(display_prob_df, use_container_width=True)
-            
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine="openpyxl") as writer:
-                display_prob_df.to_excel(writer, sheet_name=f"ปัญหา_{selected_zone}", index=False)
-            
-            st.download_button(
-                label=f"📥 ดาวน์โหลดรายการสินค้ามีปัญหา โซน {selected_zone} (.xlsx)",
-                data=output.getvalue(),
-                file_name=f"สินค้ามีปัญหา_โซน_{selected_zone}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-        else:
-            st.success(f"🎉 ยอดเยี่ยม! ไม่พบสินค้าคงเหลือติดลบในโซน {selected_zone}")
-    else:
-        st.info(f"👈 โซน {selected_zone} ยังไม่มีข้อมูลสินค้า")
-
-# ------------------------------------------
-# ฟังก์ชัน 4: สรุปรายงานรายเดือน (วิเคราะห์การเปลี่ยนแปลง)
-# ------------------------------------------
-elif menu == "📈 สรุปรายงานรายเดือน (วิเคราะห์การเปลี่ยนแปลง)":
-    st.title("📈 สรุปรายงานรายเดือน: วิเคราะห์การเปลี่ยนแปลงสต็อกแยกตามแท็กและโซน")
+    display_tags = unique_tags if selected_tag == "แสดงทุกกลุ่มแท็ก" else [selected_tag]
     
-    df_snaps = load_snapshots()
+    for tag in display_tags:
+        group_df = df_zone[df_zone["แท็ก {Tag}"] == tag].reset_index(drop=True)
+        
+        with st.expander(f"📦 กลุ่มแท็ก: **{tag}** (มี {len(group_df)} รายการ)", expanded=True):
+            cols = st.columns(3)
+            for idx, row in group_df.iterrows():
+                barcode = str(row.get("รหัสสินค้า", "")).strip()
+                sub_code = str(row.get("รหัสรอง", "")).strip()
+                name = str(row.get("ชื่อรายการสินค้า", "")).strip()
+                qty = row.get("จำนวนสั่งล่าสุด", 0)
+                stock = row.get("คงเหลือ", 0)
+                
+                target_img_url = f"https://tkkonlineshop.com/images/products/{barcode}.jpg"
+                web_link = f"https://tkkonlineshop.com/products/{barcode}"
+                
+                # ตรวจสอบรูปภาพ หากไม่มี ให้ใช้รูป No Image
+                final_img_url = target_img_url if check_image_exists(target_img_url) else NO_IMAGE_PLACEHOLDER
+                
+                with cols[idx % 3]:
+                    with st.container(border=True):
+                        st.image(
+                            final_img_url, 
+                            caption=f"รหัส: {barcode}", 
+                            use_container_width=True
+                        )
+                        st.markdown(f"**{name}**")
+                        st.caption(f"รหัสสินค้า: `{barcode}` | โซน: `{selected_zone}`")
+                        st.markdown("**📋 รหัสรอง (คลิกเพื่อ Copy):**")
+                        st.code(sub_code, language="text")
+                        st.markdown(f"📦 **คงเหลือ:** {stock} | 🛒 **สั่งล่าสุด:** {qty}")
+                        st.link_button("🌐 เปิดดูบนเว็บ TKK Online", web_link, use_container_width=True)
+
+    st.divider()
+
+    # --- ส่วนตารางข้อมูลและปุ่มดาวน์โหลด (ปรับตามแท็กที่เลือก) ---
+    if selected_tag == "แสดงทุกกลุ่มแท็ก":
+        table_df = df_zone.copy()
+        table_title = f"📋 ตารางรายการข้อมูลทั้งหมด [โซน {selected_zone}]"
+        file_suffix = f"โซน_{selected_zone}_ทั้งหมด"
+    else:
+        table_df = df_zone[df_zone["แท็ก {Tag}"] == selected_tag].reset_index(drop=True)
+        clean_tag_name = re.sub(r'[\{\}]', '', selected_tag)
+        table_title = f"📋 ตารางรายการข้อมูลแท็ก {selected_tag} [โซน {selected_zone}]"
+        file_suffix = f"โซน_{selected_zone}_แท็ก_{clean_tag_name}"
+
+    st.subheader(table_title)
+    display_df = table_df.drop(columns=["ชื่อไฟล์ที่มา"], errors="ignore")
+    st.dataframe(display_df, use_container_width=True)
+
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        sheet_name = re.sub(r'[\/\\\?\*\[\]\:]', '_', file_suffix)[:31]
+        display_df.to_excel(writer, sheet_name=sheet_name, index=False)
     
-    if not df_snaps.empty:
-        months_available = sorted(list(df_snaps["month_year"].dropna().unique()), reverse=True)
-        
-        c_m, c_z = st.columns([1.5, 1.5])
-        with c_m:
-            selected_month = st.selectbox("📅 เลือกเดือนที่ต้องการวิเคราะห์:", options=months_available)
-        with c_z:
-            zone_filter_options = ["📌 รวมทุกโซน (30 โซน)"] + ALL_ZONES
-            selected_rep_zone = st.selectbox("📍 เลือกโซนที่ต้องการดูการเปลี่ยนแปลง:", options=zone_filter_options)
-            
-        cur_month_df = df_snaps[df_snaps["month_year"] == selected_month].copy()
-        if selected_rep_zone != "📌 รวมทุกโซน (30 โซน)":
-            cur_month_df = cur_month_df[cur_month_df["zone"] == selected_rep_zone]
-
-        if not cur_month_df.empty:
-            grouped_items = []
-            for (z_val, bc_val), g in cur_month_df.groupby(["zone", "barcode"]):
-                g_sorted = g.sort_values(by="timestamp")
-                first_row = g_sorted.iloc[0]
-                last_row = g_sorted.iloc[-1]
-                
-                initial_stock = first_row["stock"]
-                latest_stock = last_row["stock"]
-                delta_stock = latest_stock - initial_stock
-                
-                status_change = "คงที่"
-                if len(g_sorted) == 1:
-                    status_change = "🆕 นำเข้าใหม่"
-                elif delta_stock > 0:
-                    status_change = f"🟢 เพิ่มขึ้น (+{delta_stock:g})"
-                elif delta_stock < 0:
-                    status_change = f"🔴 ลดลง ({delta_stock:g})"
-                
-                if latest_stock < 0:
-                    status_change += " [🚨 ติดลบ]"
-                
-                grouped_items.append({
-                    "โซน": z_val,
-                    "รหัสสินค้า": bc_val,
-                    "รหัสรอง": last_row["sub_code"],
-                    "ชื่อรายการสินค้า": last_row["product_name"],
-                    "แท็ก {Tag}": last_row["tag"],
-                    "สต็อกเริ่มต้นเดือน": initial_stock,
-                    "สต็อกล่าสุด": latest_stock,
-                    "ผลต่างการเปลี่ยนแปลง": delta_stock,
-                    "สถานะการเคลื่อนไหว": status_change,
-                    "จำนวนครั้งที่อัปเดต": len(g_sorted)
-                })
-                
-            items_change_df = pd.DataFrame(grouped_items)
-            
-            m_total_items = len(items_change_df)
-            m_stock_inc = len(items_change_df[items_change_df["ผลต่างการเปลี่ยนแปลง"] > 0])
-            m_stock_dec = len(items_change_df[items_change_df["ผลต่างการเปลี่ยนแปลง"] < 0])
-            m_net_delta = items_change_df["ผลต่างการเปลี่ยนแปลง"].sum()
-            
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("📦 สินค้าที่มีการบันทึก", f"{m_total_items:,} รายการ")
-            c2.metric("🟢 สินค้าที่สต็อกเพิ่ม", f"{m_stock_inc:,} รายการ")
-            c3.metric("🔴 สินค้าที่สต็อกลดลง", f"{m_stock_dec:,} รายการ")
-            c4.metric("📊 สต็อกสุทธิเคลื่อนไหว", f"{m_net_delta:+,.0f} ชิ้น")
-
-            st.markdown("---")
-            
-            tab_tag, tab_zone, tab_detail = st.tabs(["🏷️ สรุปแยกตามแท็ก (Tag Breakdown)", "📍 สรุปแยกตามโซน (Zone Comparison)", "📋 รายละเอียดการเปลี่ยนแปลงรายสินค้า"])
-            
-            with tab_tag:
-                st.subheader(f"📊 สรุปการเปลี่ยนแปลงสต็อกแยกตามแท็ก (เดือน {selected_month})")
-                tag_summary = items_change_df.groupby("แท็ก {Tag}").agg(
-                    จำนวนสินค้า=("รหัสสินค้า", "count"),
-                    สต็อกล่าสุดรวม=("สต็อกล่าสุด", "sum"),
-                    ผลต่างการเปลี่ยนแปลงรวม=("ผลต่างการเปลี่ยนแปลง", "sum"),
-                    สินค้าที่มีสต็อกลดลง=("ผลต่างการเปลี่ยนแปลง", lambda x: (x < 0).sum()),
-                    สินค้าติดลบล่าสุด=("สต็อกล่าสุด", lambda x: (x < 0).sum())
-                ).reset_index().sort_values(by="จำนวนสินค้า", ascending=False)
-                
-                st.dataframe(tag_summary, use_container_width=True, hide_index=True)
-                if not tag_summary.empty:
-                    st.bar_chart(data=tag_summary.set_index("แท็ก {Tag}")[["สต็อกล่าสุดรวม", "ผลต่างการเปลี่ยนแปลงรวม"]])
-
-            with tab_zone:
-                st.subheader(f"📍 สรุปการเปลี่ยนแปลงสต็อกแยกตามโซน (เดือน {selected_month})")
-                zone_summary = items_change_df.groupby("โซน").agg(
-                    จำนวนสินค้า=("รหัสสินค้า", "count"),
-                    สต็อกล่าสุดรวม=("สต็อกล่าสุด", "sum"),
-                    ผลต่างการเปลี่ยนแปลงรวม=("ผลต่างการเปลี่ยนแปลง", "sum"),
-                    สินค้าติดลบ=("สต็อกล่าสุด", lambda x: (x < 0).sum())
-                ).reset_index().sort_values(by="จำนวนสินค้า", ascending=False)
-                
-                st.dataframe(zone_summary, use_container_width=True, hide_index=True)
-                if not zone_summary.empty:
-                    st.bar_chart(data=zone_summary.set_index("โซน")[["ผลต่างการเปลี่ยนแปลงรวม"]])
-
-            with tab_detail:
-                st.subheader(f"📋 รายการสินค้าที่มีการเคลื่อนไหวสต็อก (เดือน {selected_month})")
-                
-                filter_status = st.selectbox(
-                    "กรองดูเฉพาะกลุ่ม:", 
-                    ["ทั้งหมด", "🟢 เฉพาะสินค้าสต็อกเพิ่มขึ้น", "🔴 เฉพาะสินค้าสต็อกลดลง", "🚨 เฉพาะสินค้าที่สต็อกติดลบ"]
-                )
-                
-                display_items = items_change_df.copy()
-                if filter_status == "🟢 เฉพาะสินค้าสต็อกเพิ่มขึ้น":
-                    display_items = display_items[display_items["ผลต่างการเปลี่ยนแปลง"] > 0]
-                elif filter_status == "🔴 เฉพาะสินค้าสต็อกลดลง":
-                    display_items = display_items[display_items["ผลต่างการเปลี่ยนแปลง"] < 0]
-                elif filter_status == "🚨 เฉพาะสินค้าที่สต็อกติดลบ":
-                    display_items = display_items[display_items["สต็อกล่าสุด"] < 0]
-                
-                st.dataframe(display_items.sort_values(by="ผลต่างการเปลี่ยนแปลง", ascending=True), use_container_width=True, hide_index=True)
-
-            st.divider()
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine="openpyxl") as writer:
-                items_change_df.to_excel(writer, sheet_name="การเปลี่ยนแปลงรายสินค้า", index=False)
-                tag_summary.to_excel(writer, sheet_name="สรุปตามแท็ก", index=False)
-                zone_summary.to_excel(writer, sheet_name="สรุปตามโซน", index=False)
-            
-            st.download_button(
-                label=f"📥 ดาวน์โหลดรายงานการเปลี่ยนแปลง ({selected_month}) เป็น Excel (.xlsx)",
-                data=output.getvalue(),
-                file_name=f"รายงานการเปลี่ยนแปลงสต็อก_{selected_month}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-        else:
-            st.warning(f"ℹ️ ไม่พบข้อมูลการอัปโหลดในเดือน {selected_month} สำหรับโซนที่เลือก")
-    else:
-        st.info("💡 ยังไม่มีประวัติการอัปโหลดไฟล์ในระบบ เมื่อคุณเริ่มอัปโหลดไฟล์ข้อมูลเข้าโซนต่างๆ ระบบจะเริ่มบันทึก Snapshot และคำนวณการเปลี่ยนแปลงของแต่ละแท็กและแต่ละโซนให้อัตโนมัติ")
-
-# ------------------------------------------
-# ฟังก์ชัน 5: ค้นหาสินค้า & Tag
-# ------------------------------------------
-elif menu == "🔍 ค้นหาสินค้า & Tag":
-    st.title("🔍 ค้นหาและจัดกลุ่มสินค้าตาม Tag / รหัส")
-
-    search_kw = st.text_input("🔎 ค้นหาด้วย ชื่อสินค้า / บาร์โค้ด / รหัสรอง / Tag / โซน:", "")
-
-    if search_kw and not df_all.empty:
-        mask = (
-            df_all["ชื่อรายการสินค้า"].astype(str).str.contains(search_kw, case=False, na=False)
-            | df_all["รหัสสินค้า"].astype(str).str.contains(search_kw, case=False, na=False)
-            | df_all["รหัสรอง"].astype(str).str.contains(search_kw, case=False, na=False)
-            | df_all["แท็ก {Tag}"].astype(str).str.contains(search_kw, case=False, na=False)
-            | df_all["โซน"].astype(str).str.contains(search_kw, case=False, na=False)
-        )
-        res_df = df_all[mask].reset_index(drop=True)
-        st.write(f"ผลการค้นหา: พบ **{len(res_df)}** รายการ")
-        
-        view_res_type = st.radio("เลือกมุมมองผลการค้นหา:", ["🖼️ แสดงรูปภาพ (Cards)", "📋 ตารางข้อมูล (Table)"], horizontal=True)
-        if view_res_type == "🖼️ แสดงรูปภาพ (Cards)":
-            render_product_cards(res_df, "หลายโซน")
-        else:
-            st.dataframe(res_df.drop(columns=["ชื่อไฟล์ที่มา"], errors="ignore"), use_container_width=True)
-    elif not search_kw:
-        st.info("💡 พิมพ์คำค้นหา เช่น ชื่อสินค้า, แท็ก `{PV}`, หรือรหัสบาร์โค้ด เพื่อค้นหาด่วนจากทุกโซน")
-    else:
-        st.warning("⚠️ ยังไม่มีข้อมูลในระบบ กรุณาอัปโหลดไฟล์ข้อมูลก่อนทำการค้นหา")
+    st.download_button(
+        label=f"📥 ดาวน์โหลดไฟล์ Excel ({table_title.replace('📋 ', '')})",
+        data=output.getvalue(),
+        file_name=f"ข้อมูล_{file_suffix}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+else:
+    st.info(f"👈 โซน **{selected_zone}** ยังไม่มีข้อมูล คลิกที่เมนูด้านซ้าย **'📥 เพิ่มไฟล์ข้อมูลเข้าโซน {selected_zone}'** เพื่ออัปโหลดและบันทึกข้อมูล")
