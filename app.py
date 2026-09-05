@@ -3,7 +3,6 @@ import os
 import re
 import pandas as pd
 from pypdf import PdfReader
-import requests
 import streamlit as st
 
 st.set_page_config(page_title="ระบบแยกคอลัมน์ & จัดการโซนสินค้า", layout="wide")
@@ -21,16 +20,6 @@ div[data-testid="stFileUploaderDeleteBtn"] {
 """, unsafe_allow_html=True)
 
 DB_FILE = "database_inventory.csv"
-NO_IMAGE_PLACEHOLDER = "https://placehold.co/400x400/f1f5f9/94a3b8?text=No+Image"
-
-# แคชการตรวจสอบ URL เพื่อให้หน้าเว็บโหลดเร็ว ไม่ต้องเช็กซ้ำทุกครั้งที่กดแท็บ
-@st.cache_data(ttl=3600, show_spinner=False)
-def check_image_exists(url):
-    try:
-        response = requests.head(url, timeout=1.5, allow_redirects=True)
-        return response.status_code == 200
-    except Exception:
-        return False
 
 # รายการโซนมาตรฐานทั้งหมด
 ALL_ZONES = [
@@ -127,6 +116,7 @@ with st.sidebar:
     st.divider()
     st.subheader(f"⚙️ จัดการ [โซน {selected_zone}]")
     
+    # อัปโหลดไฟล์เข้าโซน
     with st.expander(f"📥 เพิ่มไฟล์ข้อมูลเข้าโซน {selected_zone}", expanded=False):
         uploaded_files = st.file_uploader(
             f"เลือกไฟล์สำหรับโซน {selected_zone}", 
@@ -171,6 +161,7 @@ with st.sidebar:
                     st.success("✅ บันทึกข้อมูลเรียบร้อย!")
                     st.rerun()
 
+    # เมนูลบข้อมูลเฉพาะไฟล์
     with st.expander(f"📁 การจัดการข้อมูลโซน {selected_zone}", expanded=False):
         df_all = st.session_state.current_df
         if not df_all.empty and "โซน" in df_all.columns:
@@ -207,6 +198,7 @@ if not df_zone.empty:
     
     display_tags = unique_tags if selected_tag == "แสดงทุกกลุ่มแท็ก" else [selected_tag]
     
+    # วนลูปแสดงการ์ดสินค้า
     for tag in display_tags:
         group_df = df_zone[df_zone["แท็ก {Tag}"] == tag].reset_index(drop=True)
         
@@ -219,16 +211,13 @@ if not df_zone.empty:
                 qty = row.get("จำนวนสั่งล่าสุด", 0)
                 stock = row.get("คงเหลือ", 0)
                 
-                target_img_url = f"https://tkkonlineshop.com/images/products/{barcode}.jpg"
+                img_url = f"https://tkkonlineshop.com/images/products/{barcode}.jpg"
                 web_link = f"https://tkkonlineshop.com/products/{barcode}"
-                
-                # ตรวจสอบรูปภาพ หากไม่มี ให้ใช้รูป No Image
-                final_img_url = target_img_url if check_image_exists(target_img_url) else NO_IMAGE_PLACEHOLDER
                 
                 with cols[idx % 3]:
                     with st.container(border=True):
                         st.image(
-                            final_img_url, 
+                            img_url, 
                             caption=f"รหัส: {barcode}", 
                             use_container_width=True
                         )
@@ -241,7 +230,7 @@ if not df_zone.empty:
 
     st.divider()
 
-    # --- ส่วนตารางข้อมูลและปุ่มดาวน์โหลด (ปรับตามแท็กที่เลือก) ---
+    # --- ส่วนตารางข้อมูลและปุ่มดาวน์โหลด (ปรับให้กรองตามแท็กที่เลือก) ---
     if selected_tag == "แสดงทุกกลุ่มแท็ก":
         table_df = df_zone.copy()
         table_title = f"📋 ตารางรายการข้อมูลทั้งหมด [โซน {selected_zone}]"
